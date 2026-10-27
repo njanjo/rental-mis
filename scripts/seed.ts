@@ -11,6 +11,11 @@ import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue, Timestamp } from "firebase-admin/firestore";
 
 import type { Role } from "../lib/types";
+import {
+  currentPeriodKey,
+  dueDateForPeriod,
+  recentPeriodKeys,
+} from "../lib/billing";
 
 try {
   process.loadEnvFile?.(".env.local");
@@ -160,9 +165,11 @@ async function upsertStaff(): Promise<void> {
 
 async function seedPortfolio(): Promise<void> {
   const now = new Date();
-  const periodKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  const dueDate = Timestamp.fromDate(
-    new Date(now.getFullYear(), now.getMonth(), 5, 9, 0, 0),
+  const periodKey = currentPeriodKey(now);
+  const dueDate = Timestamp.fromDate(dueDateForPeriod(periodKey, 5) ?? now);
+  const previousPeriodKey = recentPeriodKeys(2, now)[1] ?? periodKey;
+  const previousDueDate = Timestamp.fromDate(
+    dueDateForPeriod(previousPeriodKey, 5) ?? now,
   );
 
   await db.collection("properties").doc("prop_kilimani").set({
@@ -355,6 +362,7 @@ async function seedPortfolio(): Promise<void> {
   await db.collection("invoices").doc(`lease_wanjiru_a1_${periodKey}`).set({
     leaseId: "lease_wanjiru_a1",
     tenantId: "tnt_wanjiru",
+    unitId: "unit_a1",
     propertyId: "prop_kilimani",
     periodKey,
     dueDate,
@@ -370,6 +378,7 @@ async function seedPortfolio(): Promise<void> {
   await db.collection("invoices").doc(`lease_otieno_b1_${periodKey}`).set({
     leaseId: "lease_otieno_b1",
     tenantId: "tnt_otieno",
+    unitId: "unit_b1",
     propertyId: "prop_kilimani",
     periodKey,
     dueDate,
@@ -381,6 +390,27 @@ async function seedPortfolio(): Promise<void> {
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  // Previous month left unpaid: exercises the derived overdue state without
+  // needing a payment run.
+  await db
+    .collection("invoices")
+    .doc(`lease_wanjiru_a1_${previousPeriodKey}`)
+    .set({
+      leaseId: "lease_wanjiru_a1",
+      tenantId: "tnt_wanjiru",
+      unitId: "unit_a1",
+      propertyId: "prop_kilimani",
+      periodKey: previousPeriodKey,
+      dueDate: previousDueDate,
+      amountDueMinor: 4_500_000,
+      amountPaidMinor: 0,
+      balanceMinor: 4_500_000,
+      currency: "KES",
+      status: "open",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
 
   await db.collection("maintenanceRequests").doc("mr_leak_a1").set({
     propertyId: "prop_kilimani",

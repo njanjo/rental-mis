@@ -74,6 +74,19 @@ Anything not listed here follows the spec as written.
 - **Phone index is opaque.** `tenantPhones` is readable and writable only by trusted backend code; browsers can never enumerate tenants by phone number.
 - **Rules are tested.** `npm run test:rules` covers allow/deny for auth gating, role visibility, write denial on every operations and finance collection, and the catch-all.
 
+## Phase 4A — invoices
+
+- **Money stays in integer minor units.** Every amount on an invoice (`amountDueMinor`, `amountPaidMinor`, `balanceMinor`) is KES cents; the UI formats with `Intl.NumberFormat` and never parses a stored amount as a float.
+- **One invoice per lease and period.** The id is deterministic: `{leaseId}_{YYYY-MM}`. Generation reads the document in a transaction and skips it when it exists, so rerunning a month (or a retried job) can never double-bill.
+- **Calendar-day proration.** The first and last months of a lease are billed for the days the lease overlaps the period, inclusive. `Math.round(rent × billableDays ÷ daysInMonth)` gives the nearest cent, and `billableDays`/`periodDays` are stored so the UI can explain the amount.
+- **Due date inside the period.** The invoice is due on the lease `dueDay` in the billing month, clamped to that month's last day (e.g. day 31 in February). Nairobi midnight is the business date.
+- **Stored vs derived status.** Firestore stores `open`, `partial`, `paid` or `void`. `overdue` is derived from the due date at read time, so it can never go stale and no nightly job is required. A paid or void invoice never becomes overdue.
+- **Voiding is narrow.** `void` needs a written reason, is audited, zeroes the balance and is refused once any payment is allocated. A voided period is never regenerated; allocate/reverse the payment first, then raise a replacement invoice deliberately.
+- **Generation is capability-gated and scoped.** `manage_invoices` belongs to admin and finance. Generation scans active leases with the Admin SDK, filters to the actor's properties in code, and skips leases with no overlap in the period (start after month end, end before month start).
+- **Listing.** Invoices are ordered by `dueDate DESC`. Property, stored status and period filter in Firestore (cursor pagination); `overdue` and text search resolve in memory over 200 rows, so those views return no next cursor. Search matches tenant, phone digits, unit, property and period.
+- **No late fees yet.** Arrears are visible through balances and the derived overdue state; fees and penalties stay out until the finance policy is agreed.
+- **Deferred to 4B.** The allocation engine, tenant credit balance and auto-apply on overpayment, and the arrears summary. Payments and their append-only ledger arrive in Phase 5.
+
 ## Still open (needed by Phase 5/6)
 
 1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`).

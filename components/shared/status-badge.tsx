@@ -26,6 +26,11 @@ const TONES: Record<string, Tone> = {
   in_progress: { label: "In progress", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" },
   resolved: { label: "Resolved", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
   cancelled: { label: "Cancelled", className: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
+  // invoices
+  partial: { label: "Part paid", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" },
+  paid: { label: "Paid", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
+  overdue: { label: "Overdue", className: "bg-rose-500/10 text-rose-700 dark:text-rose-400" },
+  void: { label: "Void", className: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
   // priority
   low: { label: "Low", className: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
   medium: { label: "Medium", className: "bg-sky-500/10 text-sky-700 dark:text-sky-400" },

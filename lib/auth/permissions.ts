@@ -9,6 +9,7 @@ export const CAPABILITIES = [
   "manage_leases",
   // money
   "view_financials",
+  "manage_invoices",
   "reconcile_payments",
   "approve_reversals",
   "enter_manual_receipts",
@@ -47,6 +48,7 @@ const ROLE_CAPABILITIES: Record<Role, Capability[]> = {
   ],
   finance: [
     "view_financials",
+    "manage_invoices",
     "reconcile_payments",
     "enter_manual_receipts",
     "export_reports",

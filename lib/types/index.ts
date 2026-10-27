@@ -178,8 +178,9 @@ export interface Invoice {
   id: string;
   leaseId: string;
   tenantId: string;
+  unitId: string;
   propertyId: string;
-  /** YYYY-MM — combined with leaseId this is the deterministic invoice ID. */
+  /** YYYY-MM - combined with leaseId this is the deterministic invoice ID. */
   periodKey: string;
   dueDate: FirestoreTimestamp;
   amountDueMinor: MinorUnits;
@@ -187,6 +188,12 @@ export interface Invoice {
   balanceMinor: MinorUnits;
   currency: Currency;
   status: InvoiceStatus;
+  /** Billable days in the period; less than `periodDays` means prorated rent. */
+  billableDays?: number;
+  periodDays?: number;
+  voidReason?: string;
+  voidedAt?: FirestoreTimestamp;
+  voidedBy?: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
 }

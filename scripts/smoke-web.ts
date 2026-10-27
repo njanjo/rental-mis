@@ -10,6 +10,8 @@
 import { initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 
+import { currentPeriodKey } from "../lib/billing";
+
 try {
   process.loadEnvFile?.(".env.local");
 } catch {
@@ -387,6 +389,90 @@ async function main() {
     "maintenance staff are blocked from another property",
     maintenanceOutOfScope.status === 404,
     `status ${maintenanceOutOfScope.status}`,
+  );
+
+  // 15. Invoices: list, detail, derived overdue state and role gating.
+  const invoices = await fetch(`${baseUrl}/invoices`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const invoicesHtml = await invoices.text();
+  record(
+    "admin sees invoices for the billing period",
+    invoices.status === 200 &&
+      invoicesHtml.includes("Grace Wanjiru") &&
+      invoicesHtml.includes("Peter Otieno"),
+    `status ${invoices.status}`,
+  );
+
+  const overdue = await fetch(`${baseUrl}/invoices?status=overdue`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const overdueHtml = await overdue.text();
+  record(
+    "overdue filter shows invoices past their due date",
+    overdue.status === 200 &&
+      overdueHtml.includes("Grace Wanjiru") &&
+      overdueHtml.includes("Overdue"),
+    `status ${overdue.status}`,
+  );
+
+  const invoiceId = `lease_wanjiru_a1_${currentPeriodKey()}`;
+  const invoiceDetail = await fetch(`${baseUrl}/invoices/${invoiceId}`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const invoiceDetailHtml = await invoiceDetail.text();
+  record(
+    "invoice detail renders amounts and the payment ledger",
+    invoiceDetail.status === 200 &&
+      invoiceDetailHtml.includes("Grace Wanjiru") &&
+      invoiceDetailHtml.includes("Payments applied") &&
+      invoiceDetailHtml.includes("Invoiced"),
+    `status ${invoiceDetail.status}`,
+  );
+
+  const managerInvoices = await fetch(`${baseUrl}/invoices`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+  });
+  const managerInvoicesHtml = await managerInvoices.text();
+  record(
+    "managers read invoices but cannot generate them",
+    managerInvoices.status === 200 &&
+      managerInvoicesHtml.includes("Grace Wanjiru") &&
+      !managerInvoicesHtml.includes("Generate month"),
+    `status ${managerInvoices.status}`,
+  );
+
+  const financeCookie = await sessionCookie("finance@rentalmis.test");
+  const financeInvoices = await fetch(`${baseUrl}/invoices`, {
+    headers: { Cookie: `__session=${financeCookie}` },
+  });
+  const financeInvoicesHtml = await financeInvoices.text();
+  record(
+    "finance can generate invoices",
+    financeInvoices.status === 200 &&
+      financeInvoicesHtml.includes("Generate month"),
+    `status ${financeInvoices.status}`,
+  );
+
+  const auditorInvoices = await fetch(`${baseUrl}/invoices`, {
+    headers: { Cookie: `__session=${auditorCookie}` },
+  });
+  const auditorInvoicesHtml = await auditorInvoices.text();
+  record(
+    "auditors read invoices without generation controls",
+    auditorInvoices.status === 200 &&
+      !auditorInvoicesHtml.includes("Generate month"),
+    `status ${auditorInvoices.status}`,
+  );
+
+  const maintenanceInvoices = await fetch(`${baseUrl}/invoices`, {
+    headers: { Cookie: `__session=${maintenanceCookie}` },
+    redirect: "manual",
+  });
+  record(
+    "maintenance staff are redirected off invoices",
+    maintenanceInvoices.status === 307 || maintenanceInvoices.status === 302,
+    `status ${maintenanceInvoices.status}`,
   );
 
   console.table(results);

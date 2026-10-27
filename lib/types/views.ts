@@ -1,5 +1,6 @@
 import type {
   Currency,
+  InvoiceStatus,
   LeaseStatus,
   MaintenancePriority,
   MaintenanceStatus,
@@ -117,6 +118,58 @@ export interface LeaseListItem {
 }
 
 export type LeaseDetail = LeaseListItem;
+
+/** One payment allocation shown on an invoice. */
+export interface InvoiceAllocationItem {
+  id: string;
+  paymentId: string;
+  amountMinor: MinorUnits;
+  provider: string;
+  providerTransactionId: string;
+  receivedAt: string;
+  createdByName?: string;
+  createdAt: string;
+}
+
+export interface InvoiceListItem {
+  id: string;
+  leaseId: string;
+  tenantId: string;
+  tenantName: string;
+  tenantPhone?: string;
+  unitId: string;
+  unitNumber: string;
+  propertyId: string;
+  propertyName: string;
+  periodKey: string;
+  periodLabel: string;
+  dueDate: string;
+  amountDueMinor: MinorUnits;
+  amountPaidMinor: MinorUnits;
+  balanceMinor: MinorUnits;
+  currency: Currency;
+  /** Derived status: open/partial become overdue after the due date. */
+  status: InvoiceStatus;
+  storedStatus: InvoiceStatus;
+  isOverdue: boolean;
+  billableDays?: number;
+  periodDays?: number;
+  voidReason?: string;
+  voidedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvoiceDetail extends InvoiceListItem {
+  allocations: InvoiceAllocationItem[];
+}
+
+export interface InvoiceGenerationResult {
+  periodKey: string;
+  created: number;
+  skipped: number;
+  total: number;
+}
 
 export interface MaintenanceListItem {
   id: string;
