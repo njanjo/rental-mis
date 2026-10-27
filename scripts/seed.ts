@@ -381,6 +381,8 @@ async function seedPortfolio(): Promise<void> {
     updatedAt: FieldValue.serverTimestamp(),
   });
 
+  // Part-paid by the M-Pesa receipt seeded below, so the ledger has a real
+  // allocation and a partial invoice to inspect.
   await db.collection("invoices").doc(`lease_otieno_b1_${periodKey}`).set({
     leaseId: "lease_otieno_b1",
     tenantId: "tnt_otieno",
@@ -389,10 +391,10 @@ async function seedPortfolio(): Promise<void> {
     periodKey,
     dueDate,
     amountDueMinor: 6_500_000,
-    amountPaidMinor: 0,
-    balanceMinor: 6_500_000,
+    amountPaidMinor: 3_000_000,
+    balanceMinor: 3_500_000,
     currency: "KES",
-    status: "open",
+    status: "partial",
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
@@ -417,6 +419,69 @@ async function seedPortfolio(): Promise<void> {
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
+
+  // Allocated M-Pesa receipt: oldest-due allocation against the current
+  // invoice, leaving a 35,000 KES balance so the ledger shows a partial.
+  const mpesaReceivedAt = Timestamp.fromDate(
+    new Date(now.getTime() - 2 * 86_400_000),
+  );
+  await db.collection("payments").doc("pay_otieno_demo").set({
+    provider: "mpesa",
+    providerTransactionId: "SJK4AB12XY",
+    amountMinor: 3_000_000,
+    currency: "KES",
+    tenantId: "tnt_otieno",
+    leaseId: "lease_otieno_b1",
+    propertyId: "prop_kilimani",
+    status: "allocated",
+    source: "manual",
+    payerName: "Peter Otieno",
+    payerPhone: "+254723456789",
+    narration: "Rent payment via M-Pesa",
+    allocatedMinor: 3_000_000,
+    creditAddedMinor: 0,
+    confirmedAt: FieldValue.serverTimestamp(),
+    confirmedBy: "staff_finance",
+    receivedAt: mpesaReceivedAt,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  await db
+    .collection("paymentAllocations")
+    .doc(`pay_otieno_demo_lease_otieno_b1_${periodKey}`)
+    .set({
+      paymentId: "pay_otieno_demo",
+      invoiceId: `lease_otieno_b1_${periodKey}`,
+      amountMinor: 3_000_000,
+      createdBy: "staff_finance",
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+  // Money that arrived without a reliable tenant match. It must stay in the
+  // unmatched queue until a person decides who it belongs to.
+  await db.collection("payments").doc("pay_unmatched_demo").set({
+    provider: "mpesa",
+    providerTransactionId: "QGR7X2M9KL",
+    amountMinor: 2_500_000,
+    currency: "KES",
+    status: "unmatched",
+    source: "callback",
+    payerName: "John Mwangi",
+    payerPhone: "+254700112233",
+    narration: "Rent payment",
+    receivedAt: Timestamp.fromDate(new Date(now.getTime() - 86_400_000)),
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  await db.collection("unmatchedPayments").doc("unm_demo_1").set({
+    paymentId: "pay_unmatched_demo",
+    candidateTenantIds: [],
+    reason: "Payer phone did not match an active tenant",
+    reviewStatus: "pending",
+    createdAt: FieldValue.serverTimestamp(),
+  });
 
   await db.collection("maintenanceRequests").doc("mr_leak_a1").set({
     propertyId: "prop_kilimani",

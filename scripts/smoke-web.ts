@@ -496,6 +496,81 @@ async function main() {
     `status ${creditTenant.status}`,
   );
 
+  // 16. Payments: ledger, detail, unmatched queue and role gating.
+  const payments = await fetch(`${baseUrl}/payments`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const paymentsHtml = await payments.text();
+  record(
+    "admin sees the payment ledger",
+    payments.status === 200 &&
+      paymentsHtml.includes("Peter Otieno") &&
+      paymentsHtml.includes("SJK4AB12XY") &&
+      paymentsHtml.includes("QGR7X2M9KL"),
+    `status ${payments.status}`,
+  );
+
+  const paymentDetail = await fetch(
+    `${baseUrl}/payments/pay_otieno_demo`,
+    { headers: { Cookie: `__session=${cookie}` } },
+  );
+  const paymentDetailHtml = await paymentDetail.text();
+  record(
+    "payment detail renders the allocation ledger",
+    paymentDetail.status === 200 &&
+      paymentDetailHtml.includes("Allocation ledger") &&
+      paymentDetailHtml.includes("Allocated") &&
+      paymentDetailHtml.includes("Peter Otieno") &&
+      paymentDetailHtml.includes("Rent payment via M-Pesa"),
+    `status ${paymentDetail.status}`,
+  );
+
+  const unmatchedQueue = await fetch(`${baseUrl}/payments/unmatched`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const unmatchedQueueHtml = await unmatchedQueue.text();
+  record(
+    "unmatched queue shows the unknown payer",
+    unmatchedQueue.status === 200 &&
+      unmatchedQueueHtml.includes("John Mwangi") &&
+      unmatchedQueueHtml.includes("QGR7X2M9KL") &&
+      unmatchedQueueHtml.includes("25,000.00") &&
+      unmatchedQueueHtml.includes("The queue is shared across properties"),
+    `status ${unmatchedQueue.status}`,
+  );
+
+  const financePayments = await fetch(`${baseUrl}/payments`, {
+    headers: { Cookie: `__session=${financeCookie}` },
+  });
+  const financePaymentsHtml = await financePayments.text();
+  record(
+    "finance can record receipts and reconcile",
+    financePayments.status === 200 &&
+      financePaymentsHtml.includes("Record receipt") &&
+      financePaymentsHtml.includes("Unmatched"),
+    `status ${financePayments.status}`,
+  );
+
+  const managerUnmatched = await fetch(`${baseUrl}/payments/unmatched`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+    redirect: "manual",
+  });
+  record(
+    "managers are redirected off the unmatched queue",
+    managerUnmatched.status === 307 || managerUnmatched.status === 302,
+    `status ${managerUnmatched.status}`,
+  );
+
+  const maintenancePayments = await fetch(`${baseUrl}/payments`, {
+    headers: { Cookie: `__session=${maintenanceCookie}` },
+    redirect: "manual",
+  });
+  record(
+    "maintenance staff are redirected off payments",
+    maintenancePayments.status === 307 || maintenancePayments.status === 302,
+    `status ${maintenancePayments.status}`,
+  );
+
   console.table(results);
 
   if (results.some((entry) => !entry.ok)) {

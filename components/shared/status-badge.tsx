@@ -31,6 +31,15 @@ const TONES: Record<string, Tone> = {
   paid: { label: "Paid", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
   overdue: { label: "Overdue", className: "bg-rose-500/10 text-rose-700 dark:text-rose-400" },
   void: { label: "Void", className: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
+  // payments
+  received: { label: "Received", className: "bg-sky-500/10 text-sky-700 dark:text-sky-400" },
+  confirmed: { label: "Confirmed", className: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-400" },
+  allocated: { label: "Allocated", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
+  unmatched: { label: "Unmatched", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" },
+  rejected: { label: "Rejected", className: "bg-rose-500/10 text-rose-700 dark:text-rose-400" },
+  reversed: { label: "Reversed", className: "bg-rose-500/10 text-rose-700 dark:text-rose-400" },
+  reversal: { label: "Reversal", className: "bg-rose-500/10 text-rose-700 dark:text-rose-400" },
+  ignored: { label: "Ignored", className: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
   // priority
   low: { label: "Low", className: "bg-slate-500/10 text-slate-600 dark:text-slate-300" },
   medium: { label: "Medium", className: "bg-sky-500/10 text-sky-700 dark:text-sky-400" },

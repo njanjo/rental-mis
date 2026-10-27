@@ -96,6 +96,19 @@ Anything not listed here follows the spec as written.
 - **Arrears summary uses aggregations.** `getInvoiceSummary` sums and counts server-side with `sum()`/`count()` over the actor's property scope (chunked at 30 properties). It reports outstanding balance, overdue balance and count, and the amount billed in the selected period, excluding `void`. Figures follow the property filter on the list page.
 - **Deferred to Phase 5.** The payment record itself, the M-Pesa/bank ingestion, the unmatched queue, reversals, and marking a payment `allocated`. The allocation engine deliberately takes `{ paymentId, tenantId, amountMinor }` so the payment layer can pass its own committed values.
 
+## Phase 5A - payment core, unmatched queue and reversals
+
+- **References are the idempotency key.** A payment id is `pay_<sha256(provider:normalisedReference)[0..24]>`. References are trimmed, whitespace-stripped and upper-cased before hashing, so a retried callback, a double form submit and a case-variant manual entry all resolve to the same document. The transaction checks that document and refuses a duplicate instead of merging two receipts.
+- **Only reconcilers touch money.** `reconcile_payments` gates unmatched matching/ignoring and allocation; `enter_manual_receipts` plus `reconcile_payments` are both required to record a manual receipt; `approve_reversals` (admin only) gates reversal. Property scope is still enforced against the chosen tenant's properties even though the unmatched queue itself is shared.
+- **Provider money needs a reference.** M-Pesa and bank receipts require `providerTransactionId`; cash (`manual`) generates `MAN-YYYYMMDD-XXXXXXXX` so every payment still has a stable identity and audit trail.
+- **Recording and allocating are one transaction.** `recordManualReceipt` writes the payment, allocates oldest-due-first through `allocateWithinTransaction`, and writes the audit entries together. Either the money and its ledger both exist or neither does. Any remainder becomes tenant credit through the same path used by Phase 4B.
+- **Reversal is append-only.** The original payment becomes `reversed` (never edited for money) and a new payment row `rev_<paymentId>` carries the negative amount. Negative allocation rows `{reversalId}_{invoiceId}` restore each invoice, untouched credit is removed from the tenant, and the reason lands in the audit log. The original allocations remain immutable.
+- **Spent credit blocks reversal.** If the overpayment was already consumed by a later invoice, the tenant's remaining credit is smaller than what this payment added. Reversal is refused with an explanation rather than driving the balance negative; finance must unwind the later invoice first.
+- **Unmatched queue is never guessed.** An unknown payer can have no `propertyId`, so the queue is intentionally shared across properties and visible only to `reconcile_payments` holders. Matching still checks the chosen tenant's property scope. Ignoring keeps the payment and its row for audit; it does not delete money.
+- **Payment listing follows the list conventions.** Property scope, `receivedAt DESC` and cursor pagination run in Firestore. Status, provider and free text filter in memory over 200 recent rows and therefore return no next cursor. An unmatched payment is hidden from property-scoped detail URLs (`forbidden`) and must be handled through the queue, where the reconciler can see it.
+- **Ledger order is deterministic.** All allocations of one payment share the transaction timestamp, so the detail view orders them by invoice due date (ties by invoice id), matching the oldest-first plan.
+- **Beam SMS stays post-commit.** Phase 5A does not send messages; the payment transaction owns money, and the SMS outbox (Phase 6) must never block or duplicate a receipt.
+
 ## Still open (needed by Phase 5/6)
 
 1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`).

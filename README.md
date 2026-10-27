@@ -8,7 +8,7 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phase 4 (Billing) complete
+## Status — Phase 5A (payment core) complete
 
 | Phase | Scope | State |
 | --- | --- | --- |
@@ -16,7 +16,8 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 | **2** | **Foundation: Next.js, Firebase, auth, roles, rules, CI hygiene** | **done** |
 | **3** | **Operations: properties, units, tenants, leases, maintenance** | **done** |
 | **4** | **Billing: invoices, allocations, credit, arrears** | **done** |
-| 5 | Payments: M-Pesa, bank adapters, unmatched queue | not started |
+| **5A** | **Payments: manual receipts, ledger, unmatched queue, reversals** | **done** |
+| 5B–5C | Bank statement CSV import; M-Pesa C2B/STK webhooks | next |
 | 6 | Automation: Beam SMS outbox, reminders, scheduled jobs | not started |
 | 7 | Reporting: realtime dashboard, charts, CSV | not started |
 | 8 | Launch: security review, backups, monitoring, training | not started |
@@ -81,13 +82,15 @@ app/
   login/                  staff sign-in (no registration)
 components/
   layout/                 sidebar, topbar, user menu
+  payments/               receipt, match, ignore and reversal dialogs
   providers/              auth provider (client)
-  shared/                 page header, module placeholder
+  shared/                 page header, module placeholder, status badges
   ui/                     shadcn primitives
 lib/
   auth/                   permissions matrix, session verification, landing
   allocation.ts           pure oldest-due-first payment planner
   billing.ts              period keys, proration, due dates, derived status
+  payments.ts             reference normalisation + deterministic payment ids
   firebase/               client + admin singleton
   types/                  all 16 Firestore collections
 firestore.rules           baseline rules (emulator-tested)

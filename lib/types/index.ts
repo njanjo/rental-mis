@@ -216,6 +216,8 @@ export const PAYMENT_STATUSES = [
   "unmatched",
   "rejected",
   "reversed",
+  /** A compensating ledger row created when another payment is reversed. */
+  "reversal",
 ] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
@@ -241,6 +243,21 @@ export interface Payment {
   bankCode?: string;
   narration?: string;
   payerName?: string;
+  /** Normalised payer MSISDN, used by ingestion to match a tenant. */
+  payerPhone?: string;
+  /** Property the payment was matched to; drives list scope. */
+  propertyId?: string;
+  /** Cash portion applied to invoices. */
+  allocatedMinor?: MinorUnits;
+  /** Surplus moved to the tenant's credit balance. */
+  creditAddedMinor?: MinorUnits;
+  /** On a `reversal` row: the original payment being compensated. */
+  reversalOfPaymentId?: string;
+  confirmedAt?: FirestoreTimestamp;
+  confirmedBy?: string;
+  reversalReason?: string;
+  reversedAt?: FirestoreTimestamp;
+  reversedBy?: string;
   receivedAt: FirestoreTimestamp;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
@@ -266,6 +283,8 @@ export interface UnmatchedPayment {
   reviewStatus: ReviewStatus;
   reviewedBy?: string;
   reviewedAt?: FirestoreTimestamp;
+  /** How the payment was matched, or why it was left in the queue. */
+  resolutionNote?: string;
   createdAt: FirestoreTimestamp;
 }
 

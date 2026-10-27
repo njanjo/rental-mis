@@ -5,6 +5,10 @@ import type {
   MaintenancePriority,
   MaintenanceStatus,
   MinorUnits,
+  PaymentProvider,
+  PaymentSource,
+  PaymentStatus,
+  ReviewStatus,
   Role,
   TenantStatus,
   UnitStatus,
@@ -189,6 +193,75 @@ export interface InvoiceSummary {
   /** Non-void invoices issued for `periodKey`. */
   billedMinor: MinorUnits;
   billedCount: number;
+}
+
+/** One invoice settled (or part-settled) by a payment. */
+export interface PaymentAllocationLine {
+  id: string;
+  invoiceId: string;
+  periodKey: string;
+  periodLabel: string;
+  dueDate: string;
+  amountMinor: MinorUnits;
+  createdAt: string;
+}
+
+export interface PaymentListItem {
+  id: string;
+  provider: PaymentProvider;
+  providerTransactionId: string;
+  amountMinor: MinorUnits;
+  currency: Currency;
+  tenantId?: string;
+  tenantName?: string;
+  tenantPhone?: string;
+  leaseId?: string;
+  propertyId?: string;
+  propertyName?: string;
+  status: PaymentStatus;
+  source: PaymentSource;
+  bankCode?: string;
+  narration?: string;
+  payerName?: string;
+  payerPhone?: string;
+  allocatedMinor: MinorUnits;
+  creditAddedMinor: MinorUnits;
+  reversalOfPaymentId?: string;
+  reversalReason?: string;
+  receivedAt: string;
+  confirmedAt?: string;
+  confirmedByName?: string;
+  reversedAt?: string;
+  reversedByName?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PaymentDetail extends PaymentListItem {
+  allocations: PaymentAllocationLine[];
+  /** Set when this payment has been reversed. */
+  reversalPaymentId?: string;
+}
+
+export interface UnmatchedPaymentListItem {
+  id: string;
+  paymentId: string;
+  amountMinor: MinorUnits;
+  currency: Currency;
+  provider: PaymentProvider;
+  providerTransactionId: string;
+  payerName?: string;
+  payerPhone?: string;
+  narration?: string;
+  receivedAt: string;
+  candidateTenantIds: string[];
+  candidateTenantNames: string[];
+  reason: string;
+  reviewStatus: ReviewStatus;
+  resolutionNote?: string;
+  reviewedByName?: string;
+  reviewedAt?: string;
+  createdAt: string;
 }
 
 export interface MaintenanceListItem {
