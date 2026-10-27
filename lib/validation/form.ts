@@ -79,7 +79,9 @@ export function parseFormValues<T>(
   values: unknown,
   fallbackMessage = "Please fix the highlighted fields.",
 ): ParseValuesResult<T> {
-  const parsed = schema.safeParse(values);
+  const parsed = schema.safeParse(
+    values instanceof FormData ? formDataToValues(values) : values,
+  );
   if (parsed.success) return { ok: true, data: parsed.data };
 
   return {

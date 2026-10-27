@@ -12,6 +12,7 @@ import { writeAuditLog } from "@/lib/audit";
 import {
   assertCapability,
   assertPropertyAccess,
+  chunkIn,
   scopePropertyIds,
 } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
@@ -184,6 +185,29 @@ async function decorate(docs: QueryDocumentSnapshot[]): Promise<PropertyListItem
   const managerNames = await getStaffNames(managerIds);
 
   return docs.map((doc) => toView(doc, counts, managerNames));
+}
+
+/** Map of property id -> name, for denormalised list rows. */
+export async function getPropertyNames(
+  ids: string[],
+): Promise<Record<string, string>> {
+  const unique = [...new Set(ids.filter(Boolean))];
+  if (unique.length === 0) return {};
+
+  const db = adminDb();
+  const names: Record<string, string> = {};
+
+  for (const chunk of chunkIn(unique)) {
+    const snapshot = await db
+      .collection(COLLECTION)
+      .where(FieldPath.documentId(), "in", chunk)
+      .get();
+    snapshot.docs.forEach((doc) => {
+      names[doc.id] = (doc.data().name as string) ?? doc.id;
+    });
+  }
+
+  return names;
 }
 
 export async function getProperty(

@@ -111,6 +111,10 @@ export interface Tenant {
   /** SMS consent. A tenant can never be messaged after opting out. */
   consentSms: boolean;
   optedOutAt?: FirestoreTimestamp;
+  /** Properties this tenant is or was associated with; drives list scope. */
+  propertyIds: string[];
+  /** Staff member who created the record. */
+  createdBy: string;
   /** Denormalised current tenancy, maintained with the lease. */
   currentLeaseId?: string;
   currentUnitId?: string;

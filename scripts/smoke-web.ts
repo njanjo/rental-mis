@@ -188,6 +188,100 @@ async function main() {
     `status ${archived.status}`,
   );
 
+  // 11. Units list, detail and scope.
+  const units = await fetch(`${baseUrl}/units`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const unitsHtml = await units.text();
+  record(
+    "admin sees units from every property",
+    units.status === 200 &&
+      unitsHtml.includes("Grace Wanjiru") &&
+      unitsHtml.includes("Nyali Beach Court"),
+    `status ${units.status}`,
+  );
+
+  const unitDetail = await fetch(`${baseUrl}/units/unit_a1`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const unitDetailHtml = await unitDetail.text();
+  record(
+    "unit detail renders lease history",
+    unitDetail.status === 200 &&
+      unitDetailHtml.includes("Lease history") &&
+      unitDetailHtml.includes("Grace Wanjiru"),
+    `status ${unitDetail.status}`,
+  );
+
+  const managerUnits = await fetch(`${baseUrl}/units`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+  });
+  const managerUnitsHtml = await managerUnits.text();
+  record(
+    "manager only sees units in assigned properties",
+    managerUnits.status === 200 &&
+      managerUnitsHtml.includes("Kilimani Heights") &&
+      !managerUnitsHtml.includes("Nyali Beach Court"),
+    `status ${managerUnits.status}`,
+  );
+
+  const unitOutOfScope = await fetch(`${baseUrl}/units/unit_n1`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+    redirect: "manual",
+  });
+  record(
+    "manager is blocked from an unassigned unit",
+    unitOutOfScope.status === 404,
+    `status ${unitOutOfScope.status}`,
+  );
+
+  // 12. Tenants list, detail and scope.
+  const tenants = await fetch(`${baseUrl}/tenants`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const tenantsHtml = await tenants.text();
+  record(
+    "admin sees tenants from every property",
+    tenants.status === 200 &&
+      tenantsHtml.includes("Grace Wanjiru") &&
+      tenantsHtml.includes("Amina Hassan"),
+    `status ${tenants.status}`,
+  );
+
+  const tenantDetail = await fetch(`${baseUrl}/tenants/tnt_wanjiru`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const tenantDetailHtml = await tenantDetail.text();
+  record(
+    "tenant detail renders contact and tenancy",
+    tenantDetail.status === 200 &&
+      tenantDetailHtml.includes("Grace Wanjiru") &&
+      tenantDetailHtml.includes("Used for M-Pesa matching"),
+    `status ${tenantDetail.status}`,
+  );
+
+  const managerTenants = await fetch(`${baseUrl}/tenants`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+  });
+  const managerTenantsHtml = await managerTenants.text();
+  record(
+    "manager only sees tenants in assigned properties",
+    managerTenants.status === 200 &&
+      managerTenantsHtml.includes("Grace Wanjiru") &&
+      !managerTenantsHtml.includes("Amina Hassan"),
+    `status ${managerTenants.status}`,
+  );
+
+  const tenantOutOfScope = await fetch(`${baseUrl}/tenants/tnt_amina`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+    redirect: "manual",
+  });
+  record(
+    "manager is blocked from an unassigned tenant",
+    tenantOutOfScope.status === 404,
+    `status ${tenantOutOfScope.status}`,
+  );
+
   console.table(results);
 
   if (results.some((entry) => !entry.ok)) {

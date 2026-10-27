@@ -245,12 +245,24 @@ async function seedPortfolio(): Promise<void> {
       });
   }
 
-  const tenants = [
+  const tenants: Array<{
+    id: string;
+    fullName: string;
+    phoneE164: string;
+    nationalIdLast4: string;
+    propertyIds: string[];
+    createdBy: string;
+    currentLeaseId?: string;
+    currentUnitId?: string;
+    currentPropertyId?: string;
+  }> = [
     {
       id: "tnt_wanjiru",
       fullName: "Grace Wanjiru",
       phoneE164: "+254712345678",
       nationalIdLast4: "4821",
+      propertyIds: ["prop_kilimani"],
+      createdBy: "staff_manager",
       currentLeaseId: "lease_wanjiru_a1",
       currentUnitId: "unit_a1",
       currentPropertyId: "prop_kilimani",
@@ -260,26 +272,46 @@ async function seedPortfolio(): Promise<void> {
       fullName: "Peter Otieno",
       phoneE164: "+254723456789",
       nationalIdLast4: "9034",
+      propertyIds: ["prop_kilimani"],
+      createdBy: "staff_manager",
       currentLeaseId: "lease_otieno_b1",
       currentUnitId: "unit_b1",
       currentPropertyId: "prop_kilimani",
     },
+    {
+      // Deliberately outside the demo manager's scope.
+      id: "tnt_amina",
+      fullName: "Amina Hassan",
+      phoneE164: "+254734567890",
+      nationalIdLast4: "5566",
+      propertyIds: ["prop_nyali"],
+      createdBy: "staff_admin",
+    },
   ];
 
   for (const tenant of tenants) {
-    await db.collection("tenants").doc(tenant.id).set({
-      fullName: tenant.fullName,
-      fullNameLower: tenant.fullName.toLowerCase(),
-      phoneE164: tenant.phoneE164,
-      nationalIdLast4: tenant.nationalIdLast4,
-      status: "active",
-      consentSms: true,
-      currentLeaseId: tenant.currentLeaseId,
-      currentUnitId: tenant.currentUnitId,
-      currentPropertyId: tenant.currentPropertyId,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    await db
+      .collection("tenants")
+      .doc(tenant.id)
+      .set({
+        fullName: tenant.fullName,
+        fullNameLower: tenant.fullName.toLowerCase(),
+        phoneE164: tenant.phoneE164,
+        nationalIdLast4: tenant.nationalIdLast4,
+        status: "active",
+        consentSms: true,
+        propertyIds: tenant.propertyIds,
+        createdBy: tenant.createdBy,
+        ...(tenant.currentLeaseId
+          ? {
+              currentLeaseId: tenant.currentLeaseId,
+              currentUnitId: tenant.currentUnitId,
+              currentPropertyId: tenant.currentPropertyId,
+            }
+          : {}),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
 
     // Unique-active-phone index used by payment matching.
     await db.collection("tenantPhones").doc(tenant.phoneE164).set({

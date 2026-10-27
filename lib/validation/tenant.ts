@@ -33,33 +33,41 @@ const optionalText = (max: number) =>
     .optional()
     .transform((value) => (value ? value : undefined));
 
-export const tenantSchema = z.object({
+const nationalIdLast4 = z
+  .string()
+  .trim()
+  .regex(/^\d{4}$/, { message: "Enter the last 4 digits only." })
+  .optional()
+  .or(z.literal("").transform(() => undefined));
+
+/**
+ * New tenants are always created as active; status changes go through the
+ * dedicated action so they can require a reason and respect active leases.
+ */
+export const tenantCreateSchema = z.object({
+  propertyId: z.string().trim().min(1, { message: "Choose a property." }),
   fullName: name,
   phone: phoneSchema,
-  nationalIdLast4: z
-    .string()
-    .trim()
-    .regex(/^\d{4}$/, { message: "Enter the last 4 digits only." })
-    .optional()
-    .or(z.literal("").transform(() => undefined)),
-  status: z.enum(TENANT_STATUSES, { message: "Choose a tenant status." }),
+  nationalIdLast4,
   consentSms: z.boolean().default(true),
   notes: optionalText(1000),
 });
 
-export type TenantInput = z.infer<typeof tenantSchema>;
+export type TenantCreateInput = z.infer<typeof tenantCreateSchema>;
 
-export const tenantUpdateSchema = tenantSchema;
+/** Editing keeps the tenant on their property; leases move tenancy. */
+export const tenantUpdateSchema = tenantCreateSchema.omit({ propertyId: true });
+
+export type TenantUpdateInput = z.infer<typeof tenantUpdateSchema>;
 
 /** Marking a tenant as former is a status change, not a delete. */
 export const tenantStatusSchema = z.object({
-  status: z.enum(TENANT_STATUSES),
+  status: z.enum(TENANT_STATUSES, { message: "Choose a tenant status." }),
   reason: z
     .string()
     .trim()
     .min(5, { message: "Give a short reason (at least 5 characters)." })
-    .max(500)
-    .optional(),
+    .max(500),
 });
 
 export type TenantStatusInput = z.infer<typeof tenantStatusSchema>;

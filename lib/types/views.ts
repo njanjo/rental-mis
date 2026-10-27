@@ -47,17 +47,29 @@ export interface UnitListItem {
   depositAmountMinor: MinorUnits;
   currency: Currency;
   status: UnitStatus;
+  active: boolean;
   notes?: string;
+  archiveReason?: string;
   activeLeaseId?: string;
   activeTenantId?: string;
   tenantName?: string;
-  /** Number of leases in any state, for the detail screen. */
-  leaseCount: number;
+  tenantPhone?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export type UnitDetail = UnitListItem;
+
+/** One row in a unit's lease history. */
+export interface UnitLeaseHistoryItem {
+  id: string;
+  tenantId: string;
+  tenantName: string;
+  startDate: string;
+  endDate: string;
+  rentAmountMinor: MinorUnits;
+  status: LeaseStatus;
+}
 
 export interface TenantListItem {
   id: string;
@@ -67,6 +79,8 @@ export interface TenantListItem {
   status: TenantStatus;
   consentSms: boolean;
   notes?: string;
+  propertyIds: string[];
+  propertyNames: string[];
   currentLeaseId?: string;
   currentUnitId?: string;
   currentPropertyId?: string;

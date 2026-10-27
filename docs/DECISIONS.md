@@ -39,6 +39,11 @@ Anything not listed here follows the spec as written.
 - **Rent edits on an active lease** require a written reason, are audited, and take effect on the next generated invoice — never retroactively on issued invoices.
 - **Optimistic concurrency.** Writes that may race (lease activation, payment allocation) run in transactions and re-read state before committing.
 - **Money never leaves integer minor units.** Forms accept `15,000.50` and convert at the edge; no float arithmetic touches stored balances.
+- **Units are leased, not toggled.** `status` cannot be set to `occupied` from the unit form; lease creation/termination owns occupancy. A unit with an open lease cannot be archived or moved out of `occupied`. Unit numbers are unique per property among active units; an archived unit's number may be reused, but that archived unit then cannot be restored until the duplicate is resolved.
+- **Tenant scope is additive.** `tenants.propertyIds` lists every property a tenant is or was associated with (a lease unions the new property in), and `createdBy` lets staff see records they created. Tenant edits cannot move a property; leases do. Duplicate details are a validation problem, not a security one: admins see everything.
+- **One active tenant per phone.** `tenantPhones/{e164}` is updated in the same transaction as the tenant, so payment matching always resolves to exactly one active tenant. Changing a phone deactivates the old index entry rather than deleting history.
+- **Tenant status is a separate action.** `active → inactive/former` needs a reason and is blocked while `currentLeaseId` exists; the edit form cannot change status.
+- **Soft delete everywhere.** Archived units keep their lease history and are restored, never recreated; former tenants stay visible to the staff who need their payment trail.
 
 ## Still open (needed by Phase 5/6)
 

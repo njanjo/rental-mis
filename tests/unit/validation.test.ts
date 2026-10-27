@@ -9,7 +9,11 @@ import {
 import { moneyMinor, moneyMinorOrZero, parseMoneyInput, moneyInputValue } from "@/lib/validation/money";
 import { propertySchema } from "@/lib/validation/property";
 import { unitSchema } from "@/lib/validation/unit";
-import { tenantSchema } from "@/lib/validation/tenant";
+import {
+  tenantCreateSchema,
+  tenantStatusSchema,
+  tenantUpdateSchema,
+} from "@/lib/validation/tenant";
 import { leaseCreateSchema, leaseTermsSchema } from "@/lib/validation/lease";
 import {
   canTransitionMaintenance,
@@ -135,26 +139,47 @@ describe("unit schema", () => {
 
 describe("tenant schema", () => {
   const valid = {
+    propertyId: "prop_1",
     fullName: "Grace Wanjiru",
     phone: "0712 345 678",
     nationalIdLast4: "4821",
-    status: "active",
     consentSms: true,
   };
 
-  it("normalises the phone to E.164", () => {
-    const parsed = tenantSchema.parse(valid);
+  it("normalises the phone to E.164 and keeps the property", () => {
+    const parsed = tenantCreateSchema.parse(valid);
     expect(parsed.phone).toBe("+254712345678");
+    expect(parsed.propertyId).toBe("prop_1");
   });
 
   it("rejects an invalid phone and a partial ID", () => {
-    expect(tenantSchema.safeParse({ ...valid, phone: "12345" }).success).toBe(false);
-    expect(tenantSchema.safeParse({ ...valid, nationalIdLast4: "12" }).success).toBe(false);
+    expect(tenantCreateSchema.safeParse({ ...valid, phone: "12345" }).success).toBe(false);
+    expect(
+      tenantCreateSchema.safeParse({ ...valid, nationalIdLast4: "12" }).success,
+    ).toBe(false);
   });
 
   it("treats an empty national ID as absent", () => {
-    const parsed = tenantSchema.parse({ ...valid, nationalIdLast4: "" });
+    const parsed = tenantCreateSchema.parse({ ...valid, nationalIdLast4: "" });
     expect(parsed.nationalIdLast4).toBeUndefined();
+  });
+
+  it("does not allow the property to change on edit", () => {
+    const parsed = tenantUpdateSchema.parse({
+      ...valid,
+      propertyId: "prop_2",
+    });
+    expect(parsed).not.toHaveProperty("propertyId");
+  });
+
+  it("requires a reason for a status change", () => {
+    expect(
+      tenantStatusSchema.safeParse({ status: "former", reason: "" }).success,
+    ).toBe(false);
+    expect(
+      tenantStatusSchema.safeParse({ status: "former", reason: "Lease ended" })
+        .success,
+    ).toBe(true);
   });
 });
 
