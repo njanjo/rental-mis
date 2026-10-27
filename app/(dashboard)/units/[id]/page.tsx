@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowRight, Receipt, UserRound, Wallet } from "lucide-react";
+import { ArrowRight, ChevronRight, Receipt, UserRound, Wallet } from "lucide-react";
 
 import {
   ArchiveUnitButton,
@@ -185,6 +185,7 @@ export default async function UnitDetailPage({
                     <TableHead className="text-xs">Period</TableHead>
                     <TableHead className="text-xs">Rent</TableHead>
                     <TableHead className="text-xs">Status</TableHead>
+                    <TableHead className="w-10" />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -206,6 +207,15 @@ export default async function UnitDetailPage({
                       </TableCell>
                       <TableCell>
                         <StatusBadge status={lease.status} />
+                      </TableCell>
+                      <TableCell>
+                        <Link
+                          href={`/leases/${lease.id}`}
+                          aria-label={`Open lease for ${lease.tenantName}`}
+                          className="flex justify-end text-muted-foreground hover:text-foreground"
+                        >
+                          <ChevronRight className="size-4" />
+                        </Link>
                       </TableCell>
                     </TableRow>
                   ))}

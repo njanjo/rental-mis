@@ -215,6 +215,18 @@ export default async function TenantDetailPage({
           <CardContent className="space-y-3 pt-4 text-sm">
             {tenant.currentLeaseId ? (
               <>
+                <div>
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Lease
+                  </p>
+                  <Link
+                    href={`/leases/${tenant.currentLeaseId}`}
+                    className="mt-1 inline-flex items-center gap-1 hover:underline"
+                  >
+                    Open lease
+                    <ArrowRight className="size-3.5" />
+                  </Link>
+                </div>
                 {tenant.currentPropertyId ? (
                   <div>
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">

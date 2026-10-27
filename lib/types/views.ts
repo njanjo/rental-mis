@@ -96,6 +96,7 @@ export interface LeaseListItem {
   id: string;
   tenantId: string;
   tenantName: string;
+  tenantPhone?: string;
   unitId: string;
   unitNumber: string;
   propertyId: string;
@@ -104,11 +105,13 @@ export interface LeaseListItem {
   endDate: string;
   rentAmountMinor: MinorUnits;
   depositAmountMinor: MinorUnits;
+  currency: Currency;
   dueDay: number;
   status: LeaseStatus;
   terminatedAt?: string;
   terminationReason?: string;
   renewedFromLeaseId?: string;
+  renewedToLeaseId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -157,6 +160,7 @@ export interface UnitOption {
   propertyId: string;
   propertyName: string;
   rentAmountMinor: MinorUnits;
+  depositAmountMinor: MinorUnits;
   status: UnitStatus;
 }
 

@@ -45,6 +45,18 @@ Anything not listed here follows the spec as written.
 - **Tenant status is a separate action.** `active → inactive/former` needs a reason and is blocked while `currentLeaseId` exists; the edit form cannot change status.
 - **Soft delete everywhere.** Archived units keep their lease history and are restored, never recreated; former tenants stay visible to the staff who need their payment trail.
 
+## Phase 3D — leases
+
+- **Pending first, activation occupies.** A new lease is `pending` and never touches unit or tenant state. Activation is the only transition that marks the unit `occupied`, writes `activeLeaseId`/`activeTenantId`, and sets the tenant's `currentLeaseId`/`currentUnitId`/`currentPropertyId` — all in one transaction. Activation is refused before the start date or after the end date, and on a double activation.
+- **One live tenancy per tenant and per unit.** Creation refuses a tenant with `currentLeaseId`, an occupied/archived/maintenance unit, an archived property, a non-active tenant, or any other `pending`/`active` lease on the unit. Activation re-checks both sides so a race cannot double-book.
+- **Tenant scope widens at lease creation.** The lease unions its property into `tenants.propertyIds` in the creation transaction, because tenant lists and rules scope on that array.
+- **Dates, tenant and unit are fixed after creation.** `updateLeaseTerms` changes only rent, deposit and due day, always with a written reason and a before/after audit. It is refused once a lease is `terminated`/`expired`; changes affect invoices generated afterwards, never issued ones.
+- **Termination is the only exit.** Active termination clears the unit's occupancy fields (unit returns to `vacant`) and the tenant's current-tenancy fields. Pending leases can be cancelled without touching either record. An optional early `endDate` must stay inside the agreed term. Payment/invoice history is retained.
+- **Renewals are linked drafts.** Only an active lease can be renewed. The renewal starts `pending`, copies tenant/unit/property/currency and inherits the deposit, and records `renewedFromLeaseId` plus the revenue reason. Activating the renewal expires the source lease and transfers occupancy in the same transaction; the source lease is never deleted.
+- **Termination never deletes history.** A terminated lease keeps its `endDate`, `terminatedAt`, `terminationReason` and any renewal links so unit and tenant histories remain auditable.
+- **Lease search is bounded.** Search matches tenant name/phone, unit number and property name over the same 200-row cap as other lists; list order is `startDate DESC`.
+- **Detail reads are scoped.** `getLease`/`getOpenLeaseForUnit` enforce property scope in code (Admin SDK bypasses rules), mirroring list behaviour.
+
 ## Still open (needed by Phase 5/6)
 
 1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`).

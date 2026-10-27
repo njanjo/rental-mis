@@ -272,6 +272,7 @@ export async function getUnitOptions(
       propertyId: data.propertyId,
       propertyName: propertyNames[data.propertyId] ?? data.propertyId,
       rentAmountMinor: data.rentAmountMinor ?? 0,
+      depositAmountMinor: data.depositAmountMinor ?? 0,
       status: data.status,
     }))
     .sort(

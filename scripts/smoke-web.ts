@@ -282,6 +282,55 @@ async function main() {
     `status ${tenantOutOfScope.status}`,
   );
 
+  // 13. Leases list, detail and manager scope.
+  const leases = await fetch(`${baseUrl}/leases`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const leasesHtml = await leases.text();
+  record(
+    "admin sees leases across properties",
+    leases.status === 200 &&
+      leasesHtml.includes("Grace Wanjiru") &&
+      leasesHtml.includes("Peter Otieno") &&
+      leasesHtml.includes("Kilimani Heights"),
+    `status ${leases.status}`,
+  );
+
+  const leaseDetail = await fetch(`${baseUrl}/leases/lease_wanjiru_a1`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const leaseDetailHtml = await leaseDetail.text();
+  record(
+    "lease detail renders terms and parties",
+    leaseDetail.status === 200 &&
+      leaseDetailHtml.includes("Lease terms") &&
+      leaseDetailHtml.includes("Grace Wanjiru") &&
+      leaseDetailHtml.includes("Rent due day"),
+    `status ${leaseDetail.status}`,
+  );
+
+  const managerLeases = await fetch(`${baseUrl}/leases`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+  });
+  const managerLeasesHtml = await managerLeases.text();
+  record(
+    "manager sees leases in assigned properties",
+    managerLeases.status === 200 &&
+      managerLeasesHtml.includes("Grace Wanjiru") &&
+      managerLeasesHtml.includes("Peter Otieno"),
+    `status ${managerLeases.status}`,
+  );
+
+  const managerLeaseDetail = await fetch(
+    `${baseUrl}/leases/lease_otieno_b1`,
+    { headers: { Cookie: `__session=${managerCookie}` } },
+  );
+  record(
+    "manager can open an assigned lease",
+    managerLeaseDetail.status === 200,
+    `status ${managerLeaseDetail.status}`,
+  );
+
   console.table(results);
 
   if (results.some((entry) => !entry.ok)) {
