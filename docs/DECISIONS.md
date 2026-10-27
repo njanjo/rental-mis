@@ -57,6 +57,16 @@ Anything not listed here follows the spec as written.
 - **Lease search is bounded.** Search matches tenant name/phone, unit number and property name over the same 200-row cap as other lists; list order is `startDate DESC`.
 - **Detail reads are scoped.** `getLease`/`getOpenLeaseForUnit` enforce property scope in code (Admin SDK bypasses rules), mirroring list behaviour.
 
+## Phase 3E — maintenance
+
+- **One request per issue.** Requests are never deleted. `open → assigned → in_progress → resolved` (or `cancelled` from any live state) is enforced in the service using `canTransitionMaintenance`; `resolved` and `cancelled` are terminal, and skipped steps are rejected.
+- **Assignment is scoped.** Only active staff with `update_maintenance` can own a request, and non-admin assignees must be assigned to the request's property. Admins are global. Creation with an assignee starts at `assigned`; setting an owner on an open request promotes it to `assigned`.
+- **Only managers reassign.** `update_maintenance` lets maintenance staff change status, priority and notes, but reassigning work requires `manage_maintenance` (admin or property manager). Every change is audited with before/after status, priority and owner.
+- **Resolving and cancelling need a note.** The note is stored as `resolutionNote` and in the audit reason; `resolvedAt`/`closedAt` are server timestamps. Progress notes overwrite `notes` (the audit log keeps the history).
+- **Maintenance does not toggle unit state.** A request never changes `units.status`; taking a unit out of service (`maintenance`) and logging a repair are separate actions.
+- **Listing.** Requests are ordered by `createdAt DESC` and scoped by the actor's properties. Property and status filter in Firestore (cursor pagination); priority, assignee and text search filter in memory over 200 rows, so those views return no next cursor. Search matches title, issue, unit number, property name and assignee.
+- **Downtime reporting.** `resolvedAt`/`closedAt` are stored explicitly so turnaround reporting does not have to infer completion from audit logs.
+
 ## Still open (needed by Phase 5/6)
 
 1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`).

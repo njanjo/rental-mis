@@ -331,6 +331,64 @@ async function main() {
     `status ${managerLeaseDetail.status}`,
   );
 
+  // 14. Maintenance list, detail and property scope.
+  const maintenanceRequests = await fetch(`${baseUrl}/maintenance`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const allMaintenanceHtml = await maintenanceRequests.text();
+  record(
+    "admin sees maintenance across properties",
+    maintenanceRequests.status === 200 &&
+      allMaintenanceHtml.includes("Leaking kitchen sink") &&
+      allMaintenanceHtml.includes("Corridor paint peeling"),
+    `status ${maintenanceRequests.status}`,
+  );
+
+  const maintenanceDetail = await fetch(`${baseUrl}/maintenance/mr_leak_a1`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const maintenanceDetailHtml = await maintenanceDetail.text();
+  record(
+    "maintenance detail renders the issue and actions",
+    maintenanceDetail.status === 200 &&
+      maintenanceDetailHtml.includes("Leaking kitchen sink") &&
+      maintenanceDetailHtml.includes("The issue") &&
+      maintenanceDetailHtml.includes("Update request"),
+    `status ${maintenanceDetail.status}`,
+  );
+
+  const scopedMaintenance = await fetch(`${baseUrl}/maintenance`, {
+    headers: { Cookie: `__session=${maintenanceCookie}` },
+  });
+  const scopedMaintenanceHtml = await scopedMaintenance.text();
+  record(
+    "maintenance staff only see assigned properties",
+    scopedMaintenance.status === 200 &&
+      scopedMaintenanceHtml.includes("Leaking kitchen sink") &&
+      !scopedMaintenanceHtml.includes("Corridor paint peeling"),
+    `status ${scopedMaintenance.status}`,
+  );
+
+  const scopedMaintenanceDetail = await fetch(
+    `${baseUrl}/maintenance/mr_leak_a1`,
+    { headers: { Cookie: `__session=${maintenanceCookie}` } },
+  );
+  record(
+    "maintenance staff can open a request in scope",
+    scopedMaintenanceDetail.status === 200,
+    `status ${scopedMaintenanceDetail.status}`,
+  );
+
+  const maintenanceOutOfScope = await fetch(
+    `${baseUrl}/maintenance/mr_paint_n1`,
+    { headers: { Cookie: `__session=${maintenanceCookie}` }, redirect: "manual" },
+  );
+  record(
+    "maintenance staff are blocked from another property",
+    maintenanceOutOfScope.status === 404,
+    `status ${maintenanceOutOfScope.status}`,
+  );
+
   console.table(results);
 
   if (results.some((entry) => !entry.ok)) {

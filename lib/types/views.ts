@@ -132,9 +132,12 @@ export interface MaintenanceListItem {
   assignedToName?: string;
   createdBy: string;
   createdByName?: string;
+  notes?: string;
+  resolutionNote?: string;
   createdAt: string;
   updatedAt: string;
   resolvedAt?: string;
+  closedAt?: string;
 }
 
 export type MaintenanceDetail = MaintenanceListItem;

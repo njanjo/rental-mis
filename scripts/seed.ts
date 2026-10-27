@@ -393,6 +393,19 @@ async function seedPortfolio(): Promise<void> {
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  // Deliberately outside the maintenance demo user's scope.
+  await db.collection("maintenanceRequests").doc("mr_paint_n1").set({
+    propertyId: "prop_nyali",
+    unitId: "unit_n1",
+    title: "Corridor paint peeling",
+    issue: "Paint is peeling near the lift on the ground floor corridor",
+    priority: "medium",
+    status: "open",
+    createdBy: "staff_admin",
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }
 
 async function seedSettings(): Promise<void> {
