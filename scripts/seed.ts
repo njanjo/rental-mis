@@ -262,6 +262,7 @@ async function seedPortfolio(): Promise<void> {
     currentLeaseId?: string;
     currentUnitId?: string;
     currentPropertyId?: string;
+    creditBalanceMinor?: number;
   }> = [
     {
       id: "tnt_wanjiru",
@@ -273,6 +274,8 @@ async function seedPortfolio(): Promise<void> {
       currentLeaseId: "lease_wanjiru_a1",
       currentUnitId: "unit_a1",
       currentPropertyId: "prop_kilimani",
+      // Unapplied overpayment; the next generated invoice consumes it.
+      creditBalanceMinor: 500_000,
     },
     {
       id: "tnt_otieno",
@@ -309,6 +312,9 @@ async function seedPortfolio(): Promise<void> {
         consentSms: true,
         propertyIds: tenant.propertyIds,
         createdBy: tenant.createdBy,
+        ...(tenant.creditBalanceMinor
+          ? { creditBalanceMinor: tenant.creditBalanceMinor }
+          : {}),
         ...(tenant.currentLeaseId
           ? {
               currentLeaseId: tenant.currentLeaseId,

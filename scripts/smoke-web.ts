@@ -475,6 +475,27 @@ async function main() {
     `status ${maintenanceInvoices.status}`,
   );
 
+  record(
+    "invoice list shows the arrears summary",
+    invoicesHtml.includes("Outstanding") &&
+      invoicesHtml.includes("Overdue") &&
+      invoicesHtml.includes("Billed"),
+    "summary cards present",
+  );
+
+  const creditTenant = await fetch(`${baseUrl}/tenants/tnt_wanjiru`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const creditTenantHtml = await creditTenant.text();
+  record(
+    "tenant detail explains held credit",
+    creditTenant.status === 200 &&
+      creditTenantHtml.includes("Credit held") &&
+      creditTenantHtml.includes("Holding") &&
+      creditTenantHtml.includes("5,000.00"),
+    `status ${creditTenant.status}`,
+  );
+
   console.table(results);
 
   if (results.some((entry) => !entry.ok)) {

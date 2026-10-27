@@ -85,6 +85,8 @@ export interface TenantListItem {
   currentLeaseId?: string;
   currentUnitId?: string;
   currentPropertyId?: string;
+  /** Unallocated overpayment held for future invoices, in minor units. */
+  creditBalanceMinor: MinorUnits;
   unitNumber?: string;
   propertyName?: string;
   createdAt: string;
@@ -154,6 +156,8 @@ export interface InvoiceListItem {
   isOverdue: boolean;
   billableDays?: number;
   periodDays?: number;
+  /** Part of amountPaidMinor that came from tenant credit rather than cash. */
+  creditAppliedMinor: MinorUnits;
   voidReason?: string;
   voidedAt?: string;
   createdAt: string;
@@ -169,6 +173,22 @@ export interface InvoiceGenerationResult {
   created: number;
   skipped: number;
   total: number;
+}
+
+/** Aggregate numbers shown above the invoice list. */
+export interface InvoiceSummary {
+  /** Period the billed figures describe. */
+  periodKey: string;
+  periodLabel: string;
+  /** Live invoices (open + partial) across the actor's scope. */
+  outstandingMinor: MinorUnits;
+  openCount: number;
+  /** Live invoices whose due date has passed. */
+  overdueMinor: MinorUnits;
+  overdueCount: number;
+  /** Non-void invoices issued for `periodKey`. */
+  billedMinor: MinorUnits;
+  billedCount: number;
 }
 
 export interface MaintenanceListItem {

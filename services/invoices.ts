@@ -4,6 +4,7 @@ import {
   FieldPath,
   FieldValue,
   Timestamp,
+  AggregateField,
   type DocumentSnapshot,
   type Query,
 } from "firebase-admin/firestore";
@@ -18,20 +19,24 @@ import {
 import type { SessionUser } from "@/lib/auth/session";
 import {
   coveredDays,
+  currentPeriodKey,
   dueDateForPeriod,
   effectiveInvoiceStatus,
   invoiceIdFor,
+  isPeriodKey,
   periodBounds,
   periodLabel,
   proratedRent,
+  statusForBalance,
 } from "@/lib/billing";
-import { toIsoString } from "@/lib/dates";
+import { toIsoString, toDateInput, parseDateInput } from "@/lib/dates";
 import { ServiceError } from "@/lib/errors";
 import { adminDb } from "@/lib/firebase/admin";
 import type {
   Invoice,
   InvoiceStatus,
   Lease,
+  MinorUnits,
   Payment,
   PaymentAllocation,
   Tenant,
@@ -42,6 +47,7 @@ import type {
   InvoiceDetail,
   InvoiceGenerationResult,
   InvoiceListItem,
+  InvoiceSummary,
   PageResult,
 } from "@/lib/types/views";
 import type { InvoiceGenerateInput } from "@/lib/validation/invoice";
@@ -50,6 +56,7 @@ import { getStaffNames } from "@/services/staff";
 
 const COLLECTION = "invoices";
 const LEASE_COLLECTION = "leases";
+const TENANT_COLLECTION = "tenants";
 const MAX_PAGE_SIZE = 100;
 const SEARCH_LIMIT = 200;
 const LEASE_SCAN_LIMIT = 500;
@@ -211,6 +218,7 @@ async function decorate(
       isOverdue: status === "overdue",
       billableDays: data.billableDays,
       periodDays: data.periodDays,
+      creditAppliedMinor: data.creditAppliedMinor ?? 0,
       voidReason: data.voidReason,
       voidedAt: toIsoString(data.voidedAt),
       createdAt: toIsoString(data.createdAt) ?? "",
@@ -418,6 +426,17 @@ export async function generateInvoices(
         bounds.daysInMonth,
       );
 
+      const tenantRef = db.collection(TENANT_COLLECTION).doc(lease.data.tenantId);
+      const tenantSnapshot = await tx.get(tenantRef);
+      const tenant = tenantSnapshot.exists
+        ? (tenantSnapshot.data() as Tenant)
+        : undefined;
+      // Overpayments held as tenant credit settle the new invoice immediately.
+      const creditAvailableMinor = Math.max(0, tenant?.creditBalanceMinor ?? 0);
+      const creditAppliedMinor = Math.min(creditAvailableMinor, amountDueMinor);
+      const amountPaidMinor = creditAppliedMinor;
+      const balanceMinor = amountDueMinor - creditAppliedMinor;
+
       tx.set(ref, {
         leaseId: lease.id,
         tenantId: lease.data.tenantId,
@@ -426,15 +445,36 @@ export async function generateInvoices(
         periodKey: input.period,
         dueDate: Timestamp.fromDate(dueDate),
         amountDueMinor,
-        amountPaidMinor: 0,
-        balanceMinor: amountDueMinor,
+        amountPaidMinor,
+        balanceMinor,
         currency: lease.data.currency ?? "KES",
-        status: "open",
+        status: statusForBalance(amountDueMinor, amountPaidMinor),
         billableDays,
         periodDays: bounds.daysInMonth,
+        creditAppliedMinor,
         createdAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       });
+
+      if (creditAppliedMinor > 0) {
+        tx.update(tenantRef, {
+          creditBalanceMinor: creditAvailableMinor - creditAppliedMinor,
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+
+        writeAuditLog(tx, {
+          actorUid: actor.uid,
+          actorRole: actor.role,
+          action: "invoice.credit_applied",
+          entityType: "invoice",
+          entityId: id,
+          before: { creditBalanceMinor: creditAvailableMinor },
+          after: {
+            creditBalanceMinor: creditAvailableMinor - creditAppliedMinor,
+            creditAppliedMinor,
+          },
+        });
+      }
 
       writeAuditLog(tx, {
         actorUid: actor.uid,
@@ -450,6 +490,7 @@ export async function generateInvoices(
           amountDueMinor,
           billableDays,
           periodDays: bounds.daysInMonth,
+          creditAppliedMinor,
         },
       });
 
@@ -497,7 +538,7 @@ export async function voidInvoice(
     if ((invoice.amountPaidMinor ?? 0) > 0 || invoice.status === "paid") {
       throw new ServiceError(
         "conflict",
-        "This invoice has payments against it. Reverse the allocations before voiding it.",
+        "This invoice has payments or credit against it. Reverse them before voiding it.",
       );
     }
 
@@ -525,4 +566,117 @@ export async function voidInvoice(
       reason,
     });
   });
+}
+
+/** Firestore allows at most 30 values in an `in` filter. */
+const SCOPE_CHUNK = 30;
+
+function scopeChunks(scope: string[] | null): Array<string[] | null> {
+  if (scope === null) return [null];
+  const chunks: string[][] = [];
+  for (let index = 0; index < scope.length; index += SCOPE_CHUNK) {
+    chunks.push(scope.slice(index, index + SCOPE_CHUNK));
+  }
+  return chunks;
+}
+
+interface AggregateTotals {
+  totalMinor: MinorUnits;
+  count: number;
+}
+
+/**
+ * Sum and count invoices over the actor's property scope. Aggregations are
+ * server-side, so the summary stays exact without loading every invoice.
+ */
+async function invoiceTotals(
+  scope: string[] | null,
+  propertyId: string | undefined,
+  narrow: (query: Query) => Query,
+  sumField: "balanceMinor" | "amountDueMinor",
+): Promise<AggregateTotals> {
+  const db = adminDb();
+  const chunks = propertyId ? [null] : scopeChunks(scope);
+  let totalMinor = 0;
+  let count = 0;
+
+  for (const chunk of chunks) {
+    let query: Query = db.collection(COLLECTION);
+    if (propertyId) {
+      query = query.where("propertyId", "==", propertyId);
+    } else if (chunk) {
+      query = query.where("propertyId", "in", chunk);
+    }
+
+    const snapshot = await narrow(query)
+      .aggregate({
+        total: AggregateField.sum(sumField),
+        count: AggregateField.count(),
+      })
+      .get();
+    const data = snapshot.data() as { total?: number | null; count?: number };
+    totalMinor += data.total ?? 0;
+    count += data.count ?? 0;
+  }
+
+  return { totalMinor, count };
+}
+
+/**
+ * Arrears summary for the invoice list: what is outstanding, what is overdue,
+ * and what was billed in the selected period. Void invoices are excluded.
+ */
+export async function getInvoiceSummary(
+  actor: SessionUser,
+  options: { propertyId?: string; periodKey?: string } = {},
+): Promise<InvoiceSummary> {
+  assertCapability(actor, "view_financials");
+  if (options.propertyId) assertPropertyAccess(actor, options.propertyId);
+
+  const scope = scopePropertyIds(actor);
+  const periodKey =
+    options.periodKey && isPeriodKey(options.periodKey)
+      ? options.periodKey
+      : currentPeriodKey();
+  const today = Timestamp.fromDate(
+    parseDateInput(toDateInput(new Date())) ?? new Date(),
+  );
+
+  const [outstanding, overdue, billed] = await Promise.all([
+    invoiceTotals(
+      scope,
+      options.propertyId,
+      (query) => query.where("status", "in", ["open", "partial"]),
+      "balanceMinor",
+    ),
+    invoiceTotals(
+      scope,
+      options.propertyId,
+      (query) =>
+        query
+          .where("status", "in", ["open", "partial"])
+          .where("dueDate", "<", today),
+      "balanceMinor",
+    ),
+    invoiceTotals(
+      scope,
+      options.propertyId,
+      (query) =>
+        query
+          .where("periodKey", "==", periodKey)
+          .where("status", "in", ["open", "partial", "paid"]),
+      "amountDueMinor",
+    ),
+  ]);
+
+  return {
+    periodKey,
+    periodLabel: periodLabel(periodKey),
+    outstandingMinor: outstanding.totalMinor,
+    openCount: outstanding.count,
+    overdueMinor: overdue.totalMinor,
+    overdueCount: overdue.count,
+    billedMinor: billed.totalMinor,
+    billedCount: billed.count,
+  };
 }

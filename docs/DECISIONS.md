@@ -85,7 +85,16 @@ Anything not listed here follows the spec as written.
 - **Generation is capability-gated and scoped.** `manage_invoices` belongs to admin and finance. Generation scans active leases with the Admin SDK, filters to the actor's properties in code, and skips leases with no overlap in the period (start after month end, end before month start).
 - **Listing.** Invoices are ordered by `dueDate DESC`. Property, stored status and period filter in Firestore (cursor pagination); `overdue` and text search resolve in memory over 200 rows, so those views return no next cursor. Search matches tenant, phone digits, unit, property and period.
 - **No late fees yet.** Arrears are visible through balances and the derived overdue state; fees and penalties stay out until the finance policy is agreed.
-- **Deferred to 4B.** The allocation engine, tenant credit balance and auto-apply on overpayment, and the arrears summary. Payments and their append-only ledger arrive in Phase 5.
+
+## Phase 4B — allocations, credit and arrears
+
+- **Oldest due first, never guessed.** `lib/allocation.ts` is a pure planner: it sorts live invoices by due date (ties on id) and fills them in order. It knows nothing about Firestore, so the ordering rules are unit-tested directly. `services/allocations.ts` executes the plan in a transaction and only ever queries `open`/`partial` invoices for that tenant.
+- **Overpayment becomes credit.** Any remainder after the last invoice is added to `tenants.creditBalanceMinor` and audited as `tenant.credit_added`. It is never silently dropped, and it is never allocated to an invoice outside the caller's property scope.
+- **Credit auto-applies at issue.** When a new invoice is generated, the tenant document is read in the same transaction and `min(creditBalanceMinor, amountDueMinor)` settles it immediately. The memo portion is stored as `creditAppliedMinor`; `amountPaidMinor` therefore means "settled in total" (cash plus credit) and `balanceMinor` stays the single source of truth for arrears.
+- **Allocation happens once per payment.** Allocation documents use the deterministic id `{paymentId}_{invoiceId}` and a second attempt for the same `paymentId` is rejected. Callers allocate exactly once per confirmed payment (Phase 5 owns event idempotency and reversal); allocation and payment can live in one transaction because `allocateWithinTransaction` performs all of its reads before writing.
+- **Credit-only invoices cannot be voided.** Voiding is refused when `amountPaidMinor > 0`, which includes invoices settled purely from credit. Reversing credit is an explicit finance action in Phase 5, not a side effect of voiding.
+- **Arrears summary uses aggregations.** `getInvoiceSummary` sums and counts server-side with `sum()`/`count()` over the actor's property scope (chunked at 30 properties). It reports outstanding balance, overdue balance and count, and the amount billed in the selected period, excluding `void`. Figures follow the property filter on the list page.
+- **Deferred to Phase 5.** The payment record itself, the M-Pesa/bank ingestion, the unmatched queue, reversals, and marking a payment `allocated`. The allocation engine deliberately takes `{ paymentId, tenantId, amountMinor }` so the payment layer can pass its own committed values.
 
 ## Still open (needed by Phase 5/6)
 

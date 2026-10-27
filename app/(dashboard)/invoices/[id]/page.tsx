@@ -115,6 +115,11 @@ export default async function InvoiceDetailPage({
             <p className="text-xl font-semibold tabular-nums">
               {formatMoney(invoice.amountPaidMinor)}
             </p>
+            {invoice.creditAppliedMinor > 0 ? (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {formatMoney(invoice.creditAppliedMinor)} from tenant credit
+              </p>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -170,7 +175,9 @@ export default async function InvoiceDetailPage({
           <CardContent className="pt-4">
             {invoice.allocations.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">
-                No payments have been allocated to this invoice.
+                {invoice.creditAppliedMinor > 0
+                  ? "Settled from tenant credit; no cash payments were allocated."
+                  : "No payments have been allocated to this invoice."}
               </p>
             ) : (
               <ul className="divide-y">

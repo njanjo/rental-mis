@@ -20,7 +20,7 @@ import {
 import { can } from "@/lib/auth/permissions";
 import { requireAnyCapability } from "@/lib/auth/session";
 import { isServiceError } from "@/lib/errors";
-import { formatDate, formatPhone } from "@/lib/format";
+import { formatDate, formatMoney, formatPhone } from "@/lib/format";
 import { getTenant } from "@/services/tenants";
 
 export const metadata: Metadata = { title: "Tenant" };
@@ -73,6 +73,16 @@ export default async function TenantDetailPage({
           <CardContent className="py-3 text-sm">
             This tenant is marked {tenant.status}. They remain on record so their
             payment history is preserved.
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {tenant.creditBalanceMinor > 0 ? (
+        <Card className="mb-4 border-sky-500/40 bg-sky-500/5">
+          <CardContent className="py-3 text-sm">
+            Holding {formatMoney(tenant.creditBalanceMinor)} of credit from an
+            overpayment. It is applied automatically to the next invoice raised
+            for this tenant.
           </CardContent>
         </Card>
       ) : null}
@@ -181,6 +191,12 @@ export default async function TenantDetailPage({
                     ? tenant.propertyNames.join(", ")
                     : "—"}
                 </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Credit held
+                </p>
+                <p className="mt-1">{formatMoney(tenant.creditBalanceMinor)}</p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">

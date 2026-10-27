@@ -5,9 +5,11 @@ import type { SessionUser } from "@/lib/auth/session";
 import { parseDateInput } from "@/lib/dates";
 import { adminDb } from "@/lib/firebase/admin";
 import type { Role } from "@/lib/types";
+import { allocatePayment } from "@/services/allocations";
 import {
   generateInvoices,
   getInvoice,
+  getInvoiceSummary,
   listInvoices,
   voidInvoice,
 } from "@/services/invoices";
@@ -617,5 +619,342 @@ describe("voidInvoice", () => {
       voidInvoice(otherFinance, "inv_other", "In scope"),
     ).resolves.toBeUndefined();
     expect((await invoiceData("inv_other"))?.status).toBe("void");
+  });
+});
+
+describe("invoice credit", () => {
+  async function seedCreditScenario(creditMinor: number): Promise<void> {
+    await seedPortfolio();
+    await seedUnit("unit_credit");
+    await seedTenant("tnt_credit", {
+      fullName: "Grace Wanjiru",
+      creditBalanceMinor: creditMinor,
+      currentLeaseId: "lease_credit",
+      currentUnitId: "unit_credit",
+      currentPropertyId: "prop_1",
+    });
+    await seedLease("lease_credit", {
+      tenantId: "tnt_credit",
+      unitId: "unit_credit",
+    });
+  }
+
+  it("applies part of the credit and leaves the rest on the invoice", async () => {
+    await seedCreditScenario(1_000_000);
+
+    await generateInvoices(admin, { period: "2026-03" });
+
+    const invoice = await invoiceData("lease_credit_2026-03");
+    expect(invoice?.amountDueMinor).toBe(4_500_000);
+    expect(invoice?.creditAppliedMinor).toBe(1_000_000);
+    expect(invoice?.amountPaidMinor).toBe(1_000_000);
+    expect(invoice?.balanceMinor).toBe(3_500_000);
+    expect(invoice?.status).toBe("partial");
+
+    const tenant = (await db().collection("tenants").doc("tnt_credit").get()).data();
+    expect(tenant?.creditBalanceMinor).toBe(0);
+    expect(await auditActions("lease_credit_2026-03")).toContain(
+      "invoice.credit_applied",
+    );
+  });
+
+  it("settles the invoice and keeps the surplus as credit", async () => {
+    await seedCreditScenario(5_000_000);
+
+    await generateInvoices(admin, { period: "2026-03" });
+
+    const invoice = await invoiceData("lease_credit_2026-03");
+    expect(invoice?.creditAppliedMinor).toBe(4_500_000);
+    expect(invoice?.amountPaidMinor).toBe(4_500_000);
+    expect(invoice?.balanceMinor).toBe(0);
+    expect(invoice?.status).toBe("paid");
+
+    const tenant = (await db().collection("tenants").doc("tnt_credit").get()).data();
+    expect(tenant?.creditBalanceMinor).toBe(500_000);
+  });
+
+  it("does not touch credit when the tenant has none", async () => {
+    await seedCreditScenario(0);
+
+    await generateInvoices(admin, { period: "2026-03" });
+
+    const invoice = await invoiceData("lease_credit_2026-03");
+    expect(invoice?.creditAppliedMinor).toBe(0);
+    expect(invoice?.status).toBe("open");
+    expect(await auditActions("lease_credit_2026-03")).not.toContain(
+      "invoice.credit_applied",
+    );
+  });
+});
+
+describe("allocatePayment", () => {
+  async function seedAllocationScenario(): Promise<void> {
+    await seedPortfolio();
+    await seedInvoice("inv_jan", { periodKey: "2026-01", dueDate: "2026-01-05" });
+    await seedInvoice("inv_feb", { periodKey: "2026-02", dueDate: "2026-02-05" });
+    await seedInvoice("inv_mar", { periodKey: "2026-03", dueDate: "2026-03-05" });
+  }
+
+  it("settles oldest due invoices first and audits the payment", async () => {
+    await seedAllocationScenario();
+
+    const result = await allocatePayment(finance, {
+      paymentId: "pay_1",
+      tenantId: "tnt_1",
+      amountMinor: 10_000_000,
+    });
+
+    expect(result.allocations).toEqual([
+      { invoiceId: "inv_jan", amountMinor: 4_500_000 },
+      { invoiceId: "inv_feb", amountMinor: 4_500_000 },
+      { invoiceId: "inv_mar", amountMinor: 1_000_000 },
+    ]);
+    expect(result.allocatedMinor).toBe(10_000_000);
+    expect(result.creditAddedMinor).toBe(0);
+
+    const january = await invoiceData("inv_jan");
+    expect(january?.status).toBe("paid");
+    expect(january?.balanceMinor).toBe(0);
+    expect(january?.amountPaidMinor).toBe(4_500_000);
+
+    const march = await invoiceData("inv_mar");
+    expect(march?.status).toBe("partial");
+    expect(march?.balanceMinor).toBe(3_500_000);
+
+    const allocations = await db()
+      .collection("paymentAllocations")
+      .where("paymentId", "==", "pay_1")
+      .get();
+    expect(allocations.size).toBe(3);
+    expect(allocations.docs.map((doc) => doc.id).sort()).toEqual([
+      "pay_1_inv_feb",
+      "pay_1_inv_jan",
+      "pay_1_inv_mar",
+    ]);
+    expect(await auditActions("pay_1")).toContain("payment.allocated");
+  });
+
+  it("holds an overpayment as tenant credit and refuses a second allocation", async () => {
+    await seedAllocationScenario();
+
+    const result = await allocatePayment(finance, {
+      paymentId: "pay_2",
+      tenantId: "tnt_1",
+      amountMinor: 15_000_000,
+    });
+
+    expect(result.allocatedMinor).toBe(13_500_000);
+    expect(result.creditAddedMinor).toBe(1_500_000);
+    expect(result.creditBalanceMinor).toBe(1_500_000);
+
+    const tenant = (await db().collection("tenants").doc("tnt_1").get()).data();
+    expect(tenant?.creditBalanceMinor).toBe(1_500_000);
+    expect(await auditActions("tnt_1")).toContain("tenant.credit_added");
+
+    await expect(
+      allocatePayment(finance, {
+        paymentId: "pay_2",
+        tenantId: "tnt_1",
+        amountMinor: 15_000_000,
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    expect((await invoiceData("inv_jan"))?.amountPaidMinor).toBe(4_500_000);
+  });
+
+  it("puts the whole payment into credit when nothing is owed", async () => {
+    await seedPortfolio();
+
+    const result = await allocatePayment(finance, {
+      paymentId: "pay_3",
+      tenantId: "tnt_1",
+      amountMinor: 2_000_000,
+    });
+
+    expect(result.allocations).toEqual([]);
+    expect(result.allocatedMinor).toBe(0);
+    expect(result.creditAddedMinor).toBe(2_000_000);
+    const tenant = (await db().collection("tenants").doc("tnt_1").get()).data();
+    expect(tenant?.creditBalanceMinor).toBe(2_000_000);
+  });
+
+  it("only allocates to invoices inside the caller's properties", async () => {
+    await seedPortfolio();
+    await seedUnit("unit_2", { propertyId: "prop_2" });
+    await seedInvoice("inv_p1", {
+      periodKey: "2026-01",
+      dueDate: "2026-01-05",
+    });
+    await seedInvoice("inv_p2", {
+      propertyId: "prop_2",
+      unitId: "unit_2",
+      periodKey: "2026-01",
+      dueDate: "2026-01-05",
+    });
+
+    const result = await allocatePayment(finance, {
+      paymentId: "pay_4",
+      tenantId: "tnt_1",
+      amountMinor: 6_000_000,
+    });
+
+    expect(result.allocations).toEqual([
+      { invoiceId: "inv_p1", amountMinor: 4_500_000 },
+    ]);
+    expect(result.creditAddedMinor).toBe(1_500_000);
+    expect((await invoiceData("inv_p2"))?.amountPaidMinor).toBe(0);
+
+    await expect(
+      allocatePayment(otherFinance, {
+        paymentId: "pay_5",
+        tenantId: "tnt_1",
+        amountMinor: 1_000_000,
+      }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+  });
+
+  it("requires the payment capability and a valid target", async () => {
+    await seedAllocationScenario();
+
+    await expect(
+      allocatePayment(manager, {
+        paymentId: "pay_6",
+        tenantId: "tnt_1",
+        amountMinor: 1_000_000,
+      }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(
+      allocatePayment(auditor, {
+        paymentId: "pay_6",
+        tenantId: "tnt_1",
+        amountMinor: 1_000_000,
+      }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(
+      allocatePayment(admin, {
+        paymentId: "pay_6",
+        tenantId: "tnt_1",
+        amountMinor: 0,
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+    await expect(
+      allocatePayment(admin, {
+        paymentId: "pay_6",
+        tenantId: "tnt_missing",
+        amountMinor: 1_000_000,
+      }),
+    ).rejects.toMatchObject({ code: "not_found" });
+  });
+
+  it("never allocates to void invoices", async () => {
+    await seedPortfolio();
+    await seedInvoice("inv_open", {
+      periodKey: "2026-02",
+      dueDate: "2026-02-05",
+    });
+    await seedInvoice("inv_void", {
+      periodKey: "2026-01",
+      dueDate: "2026-01-05",
+      amountPaidMinor: 4_500_000,
+      status: "void",
+    });
+
+    const result = await allocatePayment(admin, {
+      paymentId: "pay_7",
+      tenantId: "tnt_1",
+      amountMinor: 4_500_000,
+    });
+
+    expect(result.allocations).toEqual([
+      { invoiceId: "inv_open", amountMinor: 4_500_000 },
+    ]);
+    expect((await invoiceData("inv_void"))?.amountPaidMinor).toBe(4_500_000);
+  });
+});
+
+describe("getInvoiceSummary", () => {
+  async function seedSummary(): Promise<void> {
+    await seedPortfolio();
+    await seedUnit("unit_2", { propertyId: "prop_2" });
+    await seedTenant("tnt_2", { fullName: "Peter Otieno" });
+
+    await seedInvoice("inv_jan", {
+      periodKey: "2026-01",
+      dueDate: "2026-01-05",
+    });
+    await seedInvoice("inv_feb", {
+      periodKey: "2026-02",
+      dueDate: "2026-02-05",
+      amountPaidMinor: 1_500_000,
+      status: "partial",
+    });
+    await seedInvoice("inv_paid", {
+      periodKey: "2025-12",
+      dueDate: "2025-12-05",
+      amountPaidMinor: 4_500_000,
+      status: "paid",
+    });
+    await seedInvoice("inv_void", {
+      periodKey: "2026-03",
+      dueDate: "2026-03-05",
+      amountPaidMinor: 4_500_000,
+      status: "void",
+    });
+    await seedInvoice("inv_other", {
+      propertyId: "prop_2",
+      unitId: "unit_2",
+      tenantId: "tnt_2",
+      periodKey: "2026-02",
+      dueDate: "2026-02-10",
+    });
+  }
+
+  it("totals outstanding, overdue and billed amounts", async () => {
+    await seedSummary();
+
+    const summary = await getInvoiceSummary(admin, { periodKey: "2026-02" });
+    expect(summary.outstandingMinor).toBe(12_000_000);
+    expect(summary.openCount).toBe(3);
+    expect(summary.overdueMinor).toBe(12_000_000);
+    expect(summary.overdueCount).toBe(3);
+    expect(summary.billedMinor).toBe(9_000_000);
+    expect(summary.billedCount).toBe(2);
+    expect(summary.periodLabel).toBe("February 2026");
+  });
+
+  it("respects property scope and explicit property filters", async () => {
+    await seedSummary();
+
+    const scoped = await getInvoiceSummary(manager, { periodKey: "2026-02" });
+    expect(scoped.outstandingMinor).toBe(7_500_000);
+    expect(scoped.openCount).toBe(2);
+    expect(scoped.billedMinor).toBe(4_500_000);
+    expect(scoped.billedCount).toBe(1);
+
+    const filtered = await getInvoiceSummary(admin, {
+      propertyId: "prop_2",
+      periodKey: "2026-02",
+    });
+    expect(filtered.outstandingMinor).toBe(4_500_000);
+    expect(filtered.billedMinor).toBe(4_500_000);
+
+    await expect(
+      getInvoiceSummary(finance, { propertyId: "prop_2" }),
+    ).rejects.toMatchObject({ code: "forbidden" });
+    await expect(
+      getInvoiceSummary(admin, { periodKey: "not-a-period" }),
+    ).resolves.toMatchObject({ periodKey: expect.any(String) });
+  });
+
+  it("requires the view_financials capability", async () => {
+    await seedSummary();
+
+    const maintenance = actor(
+      "maintenance",
+      [],
+      "uid_maintenance",
+    );
+    await expect(getInvoiceSummary(maintenance)).rejects.toMatchObject({
+      code: "forbidden",
+    });
   });
 });

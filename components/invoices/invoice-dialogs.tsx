@@ -115,8 +115,8 @@ export function VoidInvoiceDialog({ invoice }: { invoice: InvoiceDetail }) {
       description={
         <>
           The invoice stays on record with status <strong>void</strong> and a
-          zero balance. Voiding is blocked once a payment has been allocated to
-          it.
+          zero balance. Voiding is blocked once a payment or credit has been
+          applied to it.
         </>
       }
       confirmLabel="Void invoice"

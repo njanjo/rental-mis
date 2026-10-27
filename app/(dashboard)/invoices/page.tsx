@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ChevronRight, FileText } from "lucide-react";
+import { AlertTriangle, ChevronRight, FileText, ReceiptText, Wallet } from "lucide-react";
 
 import { GenerateInvoicesDialog } from "@/components/invoices/invoice-dialogs";
 import { CursorPagination } from "@/components/shared/cursor-pagination";
@@ -9,14 +9,20 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { FilterBar } from "@/components/shared/filter-bar";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
 import { can } from "@/lib/auth/permissions";
 import { requireAnyCapability } from "@/lib/auth/session";
 import { currentPeriodKey, isPeriodKey, periodLabel, recentPeriodKeys } from "@/lib/billing";
 import { isServiceError } from "@/lib/errors";
-import { formatDate, formatMoney } from "@/lib/format";
+import { formatDate, formatMoney, formatMoneyCompact } from "@/lib/format";
 import type { InvoiceStatus } from "@/lib/types";
 import type { InvoiceListItem } from "@/lib/types/views";
-import { listInvoices } from "@/services/invoices";
+import { getInvoiceSummary, listInvoices } from "@/services/invoices";
 import { getPropertyOptions } from "@/services/properties";
 
 export const metadata: Metadata = { title: "Invoices" };
@@ -153,7 +159,7 @@ export default async function InvoicesPage({
   const canManage = can(user.role, "manage_invoices");
   const periodOptions = recentPeriodKeys(12, new Date());
 
-  const [propertyOptions, result] = await Promise.all([
+  const [propertyOptions, result, summary] = await Promise.all([
     getPropertyOptions(user).catch((error) => {
       if (isServiceError(error) && error.code === "forbidden") return [];
       throw error;
@@ -168,6 +174,13 @@ export default async function InvoicesPage({
       if (isServiceError(error) && error.code === "forbidden") {
         return { items: [], nextCursor: null };
       }
+      throw error;
+    }),
+    getInvoiceSummary(user, {
+      propertyId: propertyId || undefined,
+      periodKey: periodKey ?? currentPeriodKey(),
+    }).catch((error) => {
+      if (isServiceError(error) && error.code === "forbidden") return null;
       throw error;
     }),
   ]);
@@ -189,6 +202,73 @@ export default async function InvoicesPage({
           ) : null
         }
       />
+
+      {summary ? (
+        <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <Card className="gap-2 py-4">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-0">
+              <CardDescription className="text-xs font-medium uppercase tracking-wide">
+                Outstanding
+              </CardDescription>
+              <Wallet className="size-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent className="px-4">
+              <p className="text-2xl font-semibold tabular-nums tracking-tight">
+                {formatMoneyCompact(summary.outstandingMinor)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {summary.openCount} invoice{summary.openCount === 1 ? "" : "s"} still open
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="gap-2 py-4">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-0">
+              <CardDescription className="text-xs font-medium uppercase tracking-wide">
+                Overdue
+              </CardDescription>
+              <AlertTriangle
+                className={
+                  summary.overdueMinor > 0
+                    ? "size-4 text-rose-600"
+                    : "size-4 text-muted-foreground"
+                }
+              />
+            </CardHeader>
+            <CardContent className="px-4">
+              <p
+                className={
+                  summary.overdueMinor > 0
+                    ? "text-2xl font-semibold tabular-nums tracking-tight text-rose-600"
+                    : "text-2xl font-semibold tabular-nums tracking-tight"
+                }
+              >
+                {formatMoneyCompact(summary.overdueMinor)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {summary.overdueCount} invoice{summary.overdueCount === 1 ? "" : "s"} past due
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card className="gap-2 py-4">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 px-4 pb-0">
+              <CardDescription className="text-xs font-medium uppercase tracking-wide">
+                Billed · {summary.periodLabel}
+              </CardDescription>
+              <ReceiptText className="size-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent className="px-4">
+              <p className="text-2xl font-semibold tabular-nums tracking-tight">
+                {formatMoneyCompact(summary.billedMinor)}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {summary.billedCount} invoice{summary.billedCount === 1 ? "" : "s"} issued
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      ) : null}
 
       <FilterBar
         searchPlaceholder="Search tenant, unit, property or period…"

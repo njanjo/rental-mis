@@ -119,6 +119,8 @@ export interface Tenant {
   currentLeaseId?: string;
   currentUnitId?: string;
   currentPropertyId?: string;
+  /** Unallocated overpayment held for future invoices, in minor units. */
+  creditBalanceMinor?: MinorUnits;
   notes?: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
@@ -191,6 +193,8 @@ export interface Invoice {
   /** Billable days in the period; less than `periodDays` means prorated rent. */
   billableDays?: number;
   periodDays?: number;
+  /** Part of amountPaidMinor that came from tenant credit, not cash. */
+  creditAppliedMinor?: MinorUnits;
   voidReason?: string;
   voidedAt?: FirestoreTimestamp;
   voidedBy?: string;

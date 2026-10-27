@@ -8,14 +8,14 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phase 4A (Invoices) complete
+## Status — Phase 4 (Billing) complete
 
 | Phase | Scope | State |
 | --- | --- | --- |
 | 1 | Discovery (banks, M-Pesa products, finance policy) | open decisions |
 | **2** | **Foundation: Next.js, Firebase, auth, roles, rules, CI hygiene** | **done** |
 | **3** | **Operations: properties, units, tenants, leases, maintenance** | **done** |
-| **4** | **Billing: invoices, allocations, arrears** | **in progress — invoices done** |
+| **4** | **Billing: invoices, allocations, credit, arrears** | **done** |
 | 5 | Payments: M-Pesa, bank adapters, unmatched queue | not started |
 | 6 | Automation: Beam SMS outbox, reminders, scheduled jobs | not started |
 | 7 | Reporting: realtime dashboard, charts, CSV | not started |
@@ -86,6 +86,7 @@ components/
   ui/                     shadcn primitives
 lib/
   auth/                   permissions matrix, session verification, landing
+  allocation.ts           pure oldest-due-first payment planner
   billing.ts              period keys, proration, due dates, derived status
   firebase/               client + admin singleton
   types/                  all 16 Firestore collections

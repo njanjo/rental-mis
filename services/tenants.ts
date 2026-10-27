@@ -144,6 +144,7 @@ async function decorate(docs: QueryDocumentSnapshot[]): Promise<TenantListItem[]
     currentLeaseId: data.currentLeaseId,
     currentUnitId: data.currentUnitId,
     currentPropertyId: data.currentPropertyId,
+    creditBalanceMinor: data.creditBalanceMinor ?? 0,
     unitNumber: data.currentUnitId ? units[data.currentUnitId] : undefined,
     propertyName: data.currentPropertyId
       ? propertyNames[data.currentPropertyId] ?? data.currentPropertyId
