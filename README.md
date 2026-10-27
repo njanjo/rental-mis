@@ -8,13 +8,13 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phase 2 (Foundation) complete
+## Status — Phase 3 (Operations) complete
 
 | Phase | Scope | State |
 | --- | --- | --- |
 | 1 | Discovery (banks, M-Pesa products, finance policy) | open decisions |
 | **2** | **Foundation: Next.js, Firebase, auth, roles, rules, CI hygiene** | **done** |
-| 3 | Operations: properties, units, tenants, leases, maintenance | next |
+| **3** | **Operations: properties, units, tenants, leases, maintenance** | **done** |
 | 4 | Billing: invoices, allocations, arrears | not started |
 | 5 | Payments: M-Pesa, bank adapters, unmatched queue | not started |
 | 6 | Automation: Beam SMS outbox, reminders, scheduled jobs | not started |
@@ -91,7 +91,7 @@ lib/
 firestore.rules           baseline rules (emulator-tested)
 firestore.indexes.json    composites required by the spec
 scripts/                  seed + smoke tests
-tests/rules/              24 allow/deny cases
+tests/rules/              32 allow/deny cases
 ```
 
 ## Non-negotiables
@@ -113,6 +113,9 @@ tests/rules/              24 allow/deny cases
 
 - `middleware.ts` only checks that a cookie exists. Verification happens in the
   dashboard layout with the Admin SDK; Firestore rules are the real boundary.
+- Every application write is server-only. Firestore rules deny client writes to
+  all collections (including properties, units, tenants, leases and
+  maintenance); reads still require an active staff profile.
 - Admin SDK writes bypass rules, so every server path must validate the actor.
 - `.env.local` holds emulator routing (`FIRESTORE_EMULATOR_HOST`,
   `FIREBASE_AUTH_EMULATOR_HOST`). Remove those two lines in production.

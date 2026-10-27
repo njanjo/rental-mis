@@ -66,6 +66,21 @@ beforeEach(async () => {
       name: "Kilimani Heights",
       active: true,
     });
+    await setDoc(doc(db, "units", "unit_1"), {
+      propertyId: "prop_1",
+      unitNumber: "A1",
+      status: "vacant",
+    });
+    await setDoc(doc(db, "tenants", "tnt_1"), {
+      fullName: "Grace Wanjiru",
+      status: "active",
+    });
+    await setDoc(doc(db, "leases", "lease_1"), {
+      tenantId: "tnt_1",
+      unitId: "unit_1",
+      propertyId: "prop_1",
+      status: "active",
+    });
     await setDoc(doc(db, "invoices", "inv_1"), { status: "open", balanceMinor: 100 });
     await setDoc(doc(db, "payments", "pay_1"), { status: "confirmed" });
     await setDoc(doc(db, "auditLogs", "log_1"), { action: "test" });
@@ -97,9 +112,9 @@ describe("authentication gate", () => {
 });
 
 describe("properties", () => {
-  it("lets admin write", async () => {
+  it("blocks client writes, even for admin", async () => {
     const db = dbFor("admin-uid");
-    await assertSucceeds(
+    await assertFails(
       setDoc(doc(db, "properties", "prop_2"), { name: "New", active: true }),
     );
   });
@@ -114,6 +129,62 @@ describe("properties", () => {
   it("lets a scoped manager read", async () => {
     const db = dbFor("manager-uid");
     await assertSucceeds(getDoc(doc(db, "properties", "prop_1")));
+  });
+});
+
+describe("operations collections", () => {
+  it("lets active users read units, tenants and leases", async () => {
+    await assertSucceeds(getDoc(doc(dbFor("manager-uid"), "units", "unit_1")));
+    await assertSucceeds(getDoc(doc(dbFor("manager-uid"), "tenants", "tnt_1")));
+    await assertSucceeds(getDoc(doc(dbFor("manager-uid"), "leases", "lease_1")));
+    await assertSucceeds(getDoc(doc(dbFor("finance-uid"), "units", "unit_1")));
+    await assertSucceeds(getDoc(doc(dbFor("auditor-uid"), "tenants", "tnt_1")));
+  });
+
+  it("blocks signed-out reads of operations data", async () => {
+    const db = testEnv.unauthenticatedContext().firestore();
+    await assertFails(getDoc(doc(db, "units", "unit_1")));
+    await assertFails(getDoc(doc(db, "tenants", "tnt_1")));
+    await assertFails(getDoc(doc(db, "leases", "lease_1")));
+  });
+
+  it("blocks client writes to units, even for admin", async () => {
+    await assertFails(
+      setDoc(doc(dbFor("admin-uid"), "units", "unit_2"), {
+        propertyId: "prop_1",
+        unitNumber: "A2",
+      }),
+    );
+  });
+
+  it("blocks client writes to tenants, even for managers", async () => {
+    await assertFails(
+      setDoc(doc(dbFor("manager-uid"), "tenants", "tnt_2"), {
+        fullName: "New Tenant",
+      }),
+    );
+    await assertFails(
+      setDoc(doc(dbFor("admin-uid"), "tenants", "tnt_2"), {
+        fullName: "New Tenant",
+      }),
+    );
+  });
+
+  it("blocks client writes to leases, even for managers", async () => {
+    await assertFails(
+      setDoc(doc(dbFor("manager-uid"), "leases", "lease_2"), {
+        tenantId: "tnt_1",
+        unitId: "unit_1",
+        propertyId: "prop_1",
+        status: "pending",
+      }),
+    );
+  });
+
+  it("keeps the tenant phone index closed to clients", async () => {
+    await assertFails(
+      getDoc(doc(dbFor("admin-uid"), "tenantPhones", "+254712345678")),
+    );
   });
 });
 
@@ -184,21 +255,40 @@ describe("audit and provider events", () => {
 });
 
 describe("maintenance", () => {
-  it("lets operations and maintenance create requests", async () => {
+  it("lets maintenance staff and managers read requests", async () => {
     await assertSucceeds(
-      setDoc(doc(dbFor("manager-uid"), "maintenanceRequests", "mr_2"), { status: "open" }),
+      getDoc(doc(dbFor("maintenance-uid"), "maintenanceRequests", "mr_1")),
     );
     await assertSucceeds(
-      setDoc(doc(dbFor("maintenance-uid"), "maintenanceRequests", "mr_3"), {
+      getDoc(doc(dbFor("manager-uid"), "maintenanceRequests", "mr_1")),
+    );
+    await assertSucceeds(
+      getDoc(doc(dbFor("auditor-uid"), "maintenanceRequests", "mr_1")),
+    );
+  });
+
+  it("blocks client writes, even for operations and maintenance", async () => {
+    await assertFails(
+      setDoc(doc(dbFor("manager-uid"), "maintenanceRequests", "mr_2"), {
         status: "open",
+      }),
+    );
+    await assertFails(
+      setDoc(doc(dbFor("maintenance-uid"), "maintenanceRequests", "mr_3"), {
+        status: "resolved",
       }),
     );
   });
 
-  it("blocks finance from creating requests", async () => {
-    await assertFails(
-      setDoc(doc(dbFor("finance-uid"), "maintenanceRequests", "mr_4"), { status: "open" }),
+  it("lets any active user read requests", async () => {
+    await assertSucceeds(
+      getDoc(doc(dbFor("finance-uid"), "maintenanceRequests", "mr_1")),
     );
+  });
+
+  it("blocks signed-out reads of requests", async () => {
+    const db = testEnv.unauthenticatedContext().firestore();
+    await assertFails(getDoc(doc(db, "maintenanceRequests", "mr_1")));
   });
 });
 

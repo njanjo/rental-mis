@@ -45,10 +45,6 @@ service cloud.firestore {
       return isAdmin() || isAuditor();
     }
 
-    function isOperations() {
-      return activeUser() && role() in ['admin', 'property_manager'];
-    }
-
     // Property-level scope. Admin sees everything; other roles are limited to
     // the propertyIds assigned on their profile.
     function inPropertyScope(propertyId) {
@@ -62,24 +58,31 @@ service cloud.firestore {
       allow write: if false; // provision roles via trusted backend only
     }
 
+    // Operations data is written exclusively through server actions using the
+    // Admin SDK, which enforces capabilities, property scope and audit trails.
+    // Clients may only read.
     match /properties/{id} {
       allow read: if activeUser();
-      allow write: if isAdmin();
+      allow write: if false;
     }
 
     match /units/{id} {
       allow read: if activeUser();
-      allow write: if isAdmin();
+      allow write: if false;
     }
 
     match /tenants/{id} {
       allow read: if activeUser();
-      allow write: if isOperations();
+      allow write: if false;
     }
 
     match /leases/{id} {
       allow read: if activeUser();
-      allow write: if isOperations();
+      allow write: if false;
+    }
+
+    match /tenantPhones/{id} {
+      allow read, write: if false; // phone index used for payment matching only
     }
 
     match /invoices/{id} {
@@ -128,9 +131,7 @@ service cloud.firestore {
 
     match /maintenanceRequests/{id} {
       allow read: if activeUser();
-      allow create, update: if activeUser()
-        && role() in ['admin', 'property_manager', 'maintenance'];
-      allow delete: if isAdmin();
+      allow write: if false; // service enforces transitions and assignment
     }
 
     match /systemSettings/{id} {

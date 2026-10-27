@@ -67,6 +67,13 @@ Anything not listed here follows the spec as written.
 - **Listing.** Requests are ordered by `createdAt DESC` and scoped by the actor's properties. Property and status filter in Firestore (cursor pagination); priority, assignee and text search filter in memory over 200 rows, so those views return no next cursor. Search matches title, issue, unit number, property name and assignee.
 - **Downtime reporting.** `resolvedAt`/`closedAt` are stored explicitly so turnaround reporting does not have to infer completion from audit logs.
 
+## Phase 3F — server-only writes
+
+- **Clients never write.** Every Firestore collection that holds application data (`properties`, `units`, `tenants`, `tenantPhones`, `leases`, `maintenanceRequests`, invoices, payments, allocations, unmatched payments, SMS, audit logs, settings) denies client writes in the rules. All mutations go through server actions using the Admin SDK, which enforce capabilities, property scope, validation and the audit trail in one transaction.
+- **Reads stay authenticated.** Reads require an active `users` profile. Admin SDK reads bypass rules, so services still enforce property scope in code; rules are defence in depth, not the authorisation model.
+- **Phone index is opaque.** `tenantPhones` is readable and writable only by trusted backend code; browsers can never enumerate tenants by phone number.
+- **Rules are tested.** `npm run test:rules` covers allow/deny for auth gating, role visibility, write denial on every operations and finance collection, and the catch-all.
+
 ## Still open (needed by Phase 5/6)
 
 1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`).
