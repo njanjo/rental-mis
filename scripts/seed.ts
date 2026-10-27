@@ -93,6 +93,7 @@ const COLLECTIONS = [
   "properties",
   "units",
   "tenants",
+  "tenantPhones",
   "leases",
   "invoices",
   "payments",
@@ -166,31 +167,82 @@ async function seedPortfolio(): Promise<void> {
 
   await db.collection("properties").doc("prop_kilimani").set({
     name: "Kilimani Heights",
+    nameLower: "kilimani heights",
     address: "Wood Avenue, Kilimani",
     county: "Nairobi",
     managerIds: ["staff_manager"],
+    notes: "Caretaker on site on weekdays. Water is borehole-backed.",
+    active: true,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  // Second property deliberately outside the demo manager's scope so property
+  // scoping can be exercised without changing the seed.
+  await db.collection("properties").doc("prop_nyali").set({
+    name: "Nyali Beach Court",
+    nameLower: "nyali beach court",
+    address: "Off Link Road, Nyali",
+    county: "Mombasa",
+    managerIds: [],
     active: true,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
 
   const units = [
-    { id: "unit_a1", unitNumber: "A1", rent: 4_500_000, deposit: 9_000_000, status: "occupied" },
-    { id: "unit_a2", unitNumber: "A2", rent: 5_200_000, deposit: 10_400_000, status: "vacant" },
-    { id: "unit_b1", unitNumber: "B1", rent: 6_500_000, deposit: 13_000_000, status: "occupied" },
+    {
+      id: "unit_a1",
+      unitNumber: "A1",
+      rent: 4_500_000,
+      deposit: 9_000_000,
+      status: "occupied",
+      leaseId: "lease_wanjiru_a1",
+      tenantId: "tnt_wanjiru",
+    },
+    {
+      id: "unit_a2",
+      unitNumber: "A2",
+      rent: 5_200_000,
+      deposit: 10_400_000,
+      status: "vacant",
+    },
+    {
+      id: "unit_b1",
+      unitNumber: "B1",
+      rent: 6_500_000,
+      deposit: 13_000_000,
+      status: "occupied",
+      leaseId: "lease_otieno_b1",
+      tenantId: "tnt_otieno",
+    },
+    {
+      id: "unit_n1",
+      unitNumber: "N1",
+      rent: 5_800_000,
+      deposit: 11_600_000,
+      status: "vacant",
+      propertyId: "prop_nyali",
+    },
   ];
 
   for (const unit of units) {
-    await db.collection("units").doc(unit.id).set({
-      propertyId: "prop_kilimani",
-      unitNumber: unit.unitNumber,
-      rentAmountMinor: unit.rent,
-      depositAmountMinor: unit.deposit,
-      currency: "KES",
-      status: unit.status,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    await db
+      .collection("units")
+      .doc(unit.id)
+      .set({
+        propertyId: unit.propertyId ?? "prop_kilimani",
+        unitNumber: unit.unitNumber,
+        rentAmountMinor: unit.rent,
+        depositAmountMinor: unit.deposit,
+        currency: "KES",
+        status: unit.status,
+        active: true,
+        ...(unit.leaseId ? { activeLeaseId: unit.leaseId } : {}),
+        ...(unit.tenantId ? { activeTenantId: unit.tenantId } : {}),
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
   }
 
   const tenants = [
@@ -199,21 +251,40 @@ async function seedPortfolio(): Promise<void> {
       fullName: "Grace Wanjiru",
       phoneE164: "+254712345678",
       nationalIdLast4: "4821",
+      currentLeaseId: "lease_wanjiru_a1",
+      currentUnitId: "unit_a1",
+      currentPropertyId: "prop_kilimani",
     },
     {
       id: "tnt_otieno",
       fullName: "Peter Otieno",
       phoneE164: "+254723456789",
       nationalIdLast4: "9034",
+      currentLeaseId: "lease_otieno_b1",
+      currentUnitId: "unit_b1",
+      currentPropertyId: "prop_kilimani",
     },
   ];
 
   for (const tenant of tenants) {
     await db.collection("tenants").doc(tenant.id).set({
       fullName: tenant.fullName,
+      fullNameLower: tenant.fullName.toLowerCase(),
       phoneE164: tenant.phoneE164,
       nationalIdLast4: tenant.nationalIdLast4,
       status: "active",
+      consentSms: true,
+      currentLeaseId: tenant.currentLeaseId,
+      currentUnitId: tenant.currentUnitId,
+      currentPropertyId: tenant.currentPropertyId,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    // Unique-active-phone index used by payment matching.
+    await db.collection("tenantPhones").doc(tenant.phoneE164).set({
+      tenantId: tenant.id,
+      active: true,
       createdAt: FieldValue.serverTimestamp(),
       updatedAt: FieldValue.serverTimestamp(),
     });
@@ -282,6 +353,7 @@ async function seedPortfolio(): Promise<void> {
   await db.collection("maintenanceRequests").doc("mr_leak_a1").set({
     propertyId: "prop_kilimani",
     unitId: "unit_a1",
+    title: "Leaking kitchen sink",
     issue: "Kitchen sink leaking under the cabinet",
     priority: "high",
     status: "open",

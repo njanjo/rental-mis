@@ -58,10 +58,14 @@ export type UnitStatus = (typeof UNIT_STATUSES)[number];
 export interface Property {
   id: string;
   name: string;
+  /** Lower-cased name for prefix search. Written by the service layer. */
+  nameLower: string;
   address: string;
   county: string;
   managerIds: string[];
   active: boolean;
+  notes?: string;
+  archivedAt?: FirestoreTimestamp;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
 }
@@ -74,6 +78,14 @@ export interface Unit {
   depositAmountMinor: MinorUnits;
   currency: Currency;
   status: UnitStatus;
+  /** False once the unit is retired; history is preserved. */
+  active: boolean;
+  /** Denormalised for list performance; maintained with the lease. */
+  activeLeaseId?: string;
+  activeTenantId?: string;
+  notes?: string;
+  archivedAt?: FirestoreTimestamp;
+  archiveReason?: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
 }
@@ -88,13 +100,30 @@ export type TenantStatus = (typeof TENANT_STATUSES)[number];
 export interface Tenant {
   id: string;
   fullName: string;
+  /** Lower-cased full name for search. */
+  fullNameLower: string;
   /** E.164, e.g. +254712345678 */
   phoneE164: string;
   /** Only the last 4 digits are stored for display. Full ID lives in a
    *  restricted, encrypted store — never in a client-readable document. */
   nationalIdLast4?: string;
   status: TenantStatus;
+  /** SMS consent. A tenant can never be messaged after opting out. */
+  consentSms: boolean;
+  optedOutAt?: FirestoreTimestamp;
+  /** Denormalised current tenancy, maintained with the lease. */
+  currentLeaseId?: string;
+  currentUnitId?: string;
+  currentPropertyId?: string;
   notes?: string;
+  createdAt: FirestoreTimestamp;
+  updatedAt: FirestoreTimestamp;
+}
+
+/** Unique-active-phone index. Document id is the E.164 number. */
+export interface TenantPhone {
+  tenantId: string;
+  active: boolean;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
 }
@@ -120,6 +149,10 @@ export interface Lease {
   dueDay: number;
   depositAmountMinor: MinorUnits;
   status: LeaseStatus;
+  terminatedAt?: FirestoreTimestamp;
+  terminationReason?: string;
+  /** Set when this lease was created by renewing another one. */
+  renewedFromLeaseId?: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
 }
@@ -307,14 +340,20 @@ export interface MaintenanceRequest {
   id: string;
   propertyId: string;
   unitId: string;
+  title: string;
   issue: string;
   priority: MaintenancePriority;
   status: MaintenanceStatus;
   assignedTo?: string;
+  /** Denormalised assignee name so lists do not need a join. */
+  assignedToName?: string;
   createdBy: string;
+  notes?: string;
+  resolutionNote?: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
   resolvedAt?: FirestoreTimestamp;
+  closedAt?: FirestoreTimestamp;
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +363,7 @@ export interface MaintenanceRequest {
 export interface AuditLog {
   id: string;
   actorUid: string;
+  actorRole?: Role;
   action: string;
   entityType: string;
   entityId: string;

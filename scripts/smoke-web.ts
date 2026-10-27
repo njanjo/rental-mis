@@ -128,6 +128,66 @@ async function main() {
     `status ${auditor.status}`,
   );
 
+  // 8. Properties list and detail render for an administrator.
+  const properties = await fetch(`${baseUrl}/properties`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const propertiesHtml = await properties.text();
+  record(
+    "admin sees all properties",
+    properties.status === 200 &&
+      propertiesHtml.includes("Kilimani Heights") &&
+      propertiesHtml.includes("Nyali Beach Court"),
+    `status ${properties.status}`,
+  );
+
+  const propertyDetail = await fetch(`${baseUrl}/properties/prop_kilimani`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const propertyDetailHtml = await propertyDetail.text();
+  record(
+    "property detail renders",
+    propertyDetail.status === 200 &&
+      propertyDetailHtml.includes("Property details") &&
+      propertyDetailHtml.includes("Wood Avenue"),
+    `status ${propertyDetail.status}`,
+  );
+
+  // 9. Property scope is enforced for managers.
+  const managerCookie = await sessionCookie("manager@rentalmis.test");
+  const managerProperties = await fetch(`${baseUrl}/properties`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+  });
+  const managerPropertiesHtml = await managerProperties.text();
+  record(
+    "manager only sees assigned properties",
+    managerProperties.status === 200 &&
+      managerPropertiesHtml.includes("Kilimani Heights") &&
+      !managerPropertiesHtml.includes("Nyali Beach Court"),
+    `status ${managerProperties.status}`,
+  );
+
+  const outOfScope = await fetch(`${baseUrl}/properties/prop_nyali`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+    redirect: "manual",
+  });
+  record(
+    "manager is blocked from an unassigned property",
+    outOfScope.status === 404,
+    `status ${outOfScope.status}`,
+  );
+
+  // 10. Archived properties leave the default list.
+  const archived = await fetch(`${baseUrl}/properties?status=archived`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const archivedHtml = await archived.text();
+  record(
+    "archived filter is empty on a fresh seed",
+    archived.status === 200 && !archivedHtml.includes("Kilimani Heights"),
+    `status ${archived.status}`,
+  );
+
   console.table(results);
 
   if (results.some((entry) => !entry.ok)) {
