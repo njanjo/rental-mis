@@ -7,7 +7,7 @@ import { SESSION_COOKIE } from "@/lib/auth/constants";
  * real verification happens in `app/(dashboard)/layout.tsx` via
  * getSessionUser(). Treat this as a UX redirect, never as security.
  */
-const PUBLIC_PATHS = ["/login", "/api/auth/session"];
+const PUBLIC_PATHS = ["/login", "/api/auth/session", "/api/healthz"];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
