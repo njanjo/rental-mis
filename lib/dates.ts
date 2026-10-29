@@ -80,3 +80,47 @@ export function dueDateForCurrentPeriod(day: number): Date {
     `${year}-${month}-${String(clamped).padStart(2, "0")}`,
   ) as Date;
 }
+
+/** `YYYY-MM` bucket an instant falls into, in Nairobi. */
+export function nairobiMonthKey(
+  value: Date | number | string | null | undefined,
+): string {
+  const date =
+    value instanceof Date
+      ? value
+      : new Date(value ?? Number.NaN);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: NAIROBI_TIMEZONE,
+    year: "numeric",
+    month: "2-digit",
+  }).format(date);
+}
+
+export interface MonthBounds {
+  /** Midnight Nairobi on the 1st of the month. */
+  start: Date;
+  /** Midnight Nairobi on the 1st of the following month (exclusive end). */
+  end: Date;
+  /** The following month's key. */
+  nextKey: string;
+}
+
+/**
+ * Start/end instants for a `YYYY-MM` Nairobi month bucket. Nairobi is a fixed
+ * UTC+3, so the month edges are plain ISO strings with the offset attached.
+ */
+export function monthBounds(monthKey: string): MonthBounds {
+  if (!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(monthKey)) {
+    throw new Error(`Invalid month key: ${monthKey}`);
+  }
+  const [year, month] = monthKey.split("-").map(Number);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  const nextKey = `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+  return {
+    start: new Date(`${monthKey}-01T00:00:00${NAIROBI_OFFSET}`),
+    end: new Date(`${nextKey}-01T00:00:00${NAIROBI_OFFSET}`),
+    nextKey,
+  };
+}
