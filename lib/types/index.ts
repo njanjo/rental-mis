@@ -385,6 +385,12 @@ export interface SmsOutboxItem {
   attempts: number;
   nextAttemptAt: FirestoreTimestamp;
   campaignId?: string;
+  /** Beam message uid, set on first successful send, used to poll delivery. */
+  providerMessageId?: string;
+  /** Last provider or worker error; cleared on the next successful send. */
+  lastError?: string;
+  /** Who asked for this message (`system:<job>` for reminders). */
+  requestedBy: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
 }

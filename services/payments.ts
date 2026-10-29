@@ -1,4 +1,4 @@
-import "server-only";
+﻿import "server-only";
 
 import { randomUUID } from "node:crypto";
 
@@ -34,6 +34,7 @@ import type {
   Tenant,
   UnmatchedPayment,
 } from "@/lib/types";
+import { enqueueSmsWithinTransaction } from "@/services/sms";
 import type {
   PageResult,
   PaymentAllocationLine,
@@ -519,6 +520,20 @@ export async function confirmPaymentWithinTransaction(
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  // A queued receipt notification rides the same transaction; enqueue
+  // failures are swallowed so money always lands first.
+  if (tenant.consentSms === true && tenant.phoneE164) {
+    enqueueSmsWithinTransaction(tx, {
+      phoneE164: tenant.phoneE164,
+      templateKey: "payment_receipt",
+      reference: input.providerTransactionId,
+      tenantName: tenant.fullName,
+      dateInput: toDateInput(input.receivedAt),
+      moneyMinor: input.amountMinor,
+      requestedBy: actor.uid,
+    });
+  }
 
   writeAuditLog(tx, {
     actorUid: actor.uid,
