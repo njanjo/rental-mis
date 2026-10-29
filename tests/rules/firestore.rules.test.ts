@@ -7,7 +7,7 @@ import {
   initializeTestEnvironment,
   type RulesTestEnvironment,
 } from "@firebase/rules-unit-testing";
-import { doc, getDoc, setDoc } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc } from "firebase/firestore";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT ?? "demo-rental-mis";
@@ -251,6 +251,20 @@ describe("audit and provider events", () => {
   it("keeps provider events closed to every client", async () => {
     await assertFails(getDoc(doc(dbFor("admin-uid"), "providerEvents", "evt_1")));
     await assertFails(getDoc(doc(dbFor("finance-uid"), "providerEvents", "evt_1")));
+  });
+
+  it("lets finance read STK prompts but writes stay server-only", async () => {
+    await assertFails(
+      setDoc(doc(dbFor("admin-uid"), "mpesaStkRequests", "stk_1"), {
+        status: "pending",
+      }),
+    );
+    await assertFails(
+      updateDoc(doc(dbFor("finance-uid"), "mpesaStkRequests", "stk_1"), {
+        status: "succeeded",
+      }),
+    );
+    await assertFails(getDoc(doc(dbFor("maintenance-uid"), "mpesaStkRequests", "stk_1")));
   });
 });
 

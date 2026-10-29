@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Banknote, ChevronRight, FileUp, Inbox, ReceiptText } from "lucide-react";
 
 import { RecordReceiptDialog } from "@/components/payments/payment-dialogs";
+import { RequestMpesaDialog } from "@/components/payments/stk-push-dialog";
 import { CursorPagination } from "@/components/shared/cursor-pagination";
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -184,7 +185,7 @@ export default async function PaymentsPage({
         if (isServiceError(error) && error.code === "forbidden") return [];
         throw error;
       }),
-      canRecord
+      canRecord || canReconcile
         ? getTenantOptions(user).catch((error) => {
             if (isServiceError(error) && error.code === "forbidden") return [];
             throw error;
@@ -242,6 +243,12 @@ export default async function PaymentsPage({
             ) : null}
             {canRecord ? (
               <RecordReceiptDialog
+                tenantOptions={tenantOptions}
+                disabled={tenantOptions.length === 0}
+              />
+            ) : null}
+            {canReconcile ? (
+              <RequestMpesaDialog
                 tenantOptions={tenantOptions}
                 disabled={tenantOptions.length === 0}
               />

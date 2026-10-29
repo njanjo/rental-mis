@@ -109,6 +109,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /mpesaStkRequests/{id} {
+      allow read: if canViewFinance();
+      allow write: if false;
+    }
+
     match /smsOutbox/{id} {
       allow read: if isAdmin();
       allow write: if false;

@@ -272,6 +272,42 @@ export interface PaymentAllocation {
   createdAt: FirestoreTimestamp;
 }
 
+export const MPESA_STK_STATUSES = [
+  "pending",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type MpesaStkStatus = (typeof MPESA_STK_STATUSES)[number];
+
+/**
+ * One staff-requested STK push. The request document is created when Daraja
+ * accepts the prompt and lives until the customer's callback resolves it, so
+ * support can always explain what was asked and what came back.
+ */
+export interface MpesaStkRequest {
+  id: string;
+  checkoutRequestId: string;
+  merchantRequestId: string;
+  /** Where the prompt was sent, E.164. */
+  phoneE164: string;
+  amountMinor: MinorUnits;
+  /** Set when the prompt was raised from a tenant page or the payments page. */
+  tenantId?: string;
+  /** The bank user who raised the prompt (`system` for automation). */
+  requestedBy: string;
+  requestedByName?: string;
+  status: MpesaStkStatus;
+  /** Daraja result metadata resolved on the callback (0 is success). */
+  resultCode?: number;
+  resultDesc?: string;
+  /** The receipt payment that a successful callback created. */
+  paymentId?: string;
+  note?: string;
+  createdAt: FirestoreTimestamp;
+  updatedAt: FirestoreTimestamp;
+}
+
 export const REVIEW_STATUSES = ["pending", "assigned", "resolved", "ignored"] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
@@ -296,10 +332,21 @@ export const EVENT_PROCESSING_STATUSES = [
 ] as const;
 export type EventProcessingStatus = (typeof EVENT_PROCESSING_STATUSES)[number];
 
+/** Which Daraja callback a raw provider event came from. */
+export const PROVIDER_EVENT_KINDS = [
+  "c2b_validation",
+  "c2b_confirmation",
+  "stk_callback",
+] as const;
+export type ProviderEventKind = (typeof PROVIDER_EVENT_KINDS)[number];
+
 export interface ProviderEvent {
   id: string;
   provider: PaymentProvider;
   eventId?: string;
+  kind?: ProviderEventKind;
+  /** Reference the callback named, kept alongside the raw payload for greppability. */
+  externalReference?: string;
   payloadHash: string;
   receivedAt: FirestoreTimestamp;
   processingStatus: EventProcessingStatus;

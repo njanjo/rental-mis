@@ -121,12 +121,27 @@ Anything not listed here follows the spec as written.
 - **Bounded work.** A file may be 2 MB and 2,000 credit rows; the preview renders at most 300 rows. Larger statements must be split by month. Server actions raise the body limit to 4 MB to fit the CSV plus mapping fields.
 - **The run is the audit trail.** `bankSyncRuns` stores the bank code, file name, importer, counts (fetched, imported, queued, duplicates, skipped, errors) and the first row failure, so support can explain an import without re-reading the original file.
 
-## Still open (needed by Phase 5/6)
+## Phase 5C - M-Pesa callbacks (C2B + STK Push)
 
-1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`).
-2. M-Pesa products: C2B confirmation only, or also STK Push / B2C.
+- **Daraja calls three secret URLs.** `{base}/api/mpesa/validation/{secret}`, `/confirmation/{secret}` and `/stk/{secret}`, where `{secret}` is `MPESA_CALLBACK_SECRET` — a random path segment compared timing-safely. A leaked URL is useless without the secret; Daraja does not sign callbacks, so the URL secret plus payload evidence is the verify layer. Routes reply 5xx only on unexpected processing failures so Safaricom retries; every other outcome is acked with a `ResultCode` body.
+- **The raw payload is evidence first.** Every callback is stored in `providerEvents` (fully client-denied) with a payload hash and a `processingStatus` — processed, duplicate or failed with the error message — alongside the money writes in one transaction. Support can explain any receipt without trusting the phone screen.
+- **Idempotency carries over from 5A/5B.** Payment ids stay `pay_<sha256(mpesa:TransID)>`; a retried confirmation or a validation-after-confirmation both resolve to "duplicate" and never merge receipts. STK callbacks key off `MpesaReceiptNumber` instead of `CheckoutRequestID` so a regenerated prompt keeps its own receipt identity.
+- **Phone-only matching, shared logic.** `tenantPhones/{e164}` is the payer key; the tenant must be active with a linked property. Anything else — unknown payer, former tenant, tenant without a property — lands in the unmatched queue with the reason and, when known, the candidate tenant id. Bill ref numbers and payer names are stored as display fields, never as matching signals.
+- **Validation is not a gate.** A C2B validation response accepts everything structurally readable; refusing at validation would block rent money for a tenant whose phone index staff have not fixed yet. Real arbitration happens on confirmation, by which time the money has actually moved.
+- **STK requests are separate from receipts.** `mpesaStkRequests/{stk_<CheckoutRequestID>}` records who asked, for whom, the amount and the outcome; a failure code (cancelled, timeout) closes it without touching money. Financier-initiated prompts require `reconcile_payments` and property scope over the tenant.
+- **Automation vs audit.** Webhooks commit as a synthetic `system:mpesa` admin — scoped-out by construction, and every audit entry carries that uid plus `source: callback`, so machine actions are unmistakable in the log. This is the accepted trade-off for reusing the single payment path.
+- **Timestamps.** `TransTime` arrives as 12 (`YYMMDDHHmmss`) or 14 (`YYYYMMDDHHmmss`) digits in Nairobi wall clock (UTC+3); parsing handles both, and STK request timestamps are sent as 14 digits. Amount parsing refuses separators — `45,000.00` is corrupt, not 45,000.
+
+## Still open (needed by Phase 6/7)
+
+1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`; a `prod` alias was drafted locally).
+2. ~~M-Pesa products~~ — Phase 5C shipped C2B confirmation + STK Push; B2C (refunds/deposits) is still out of scope.
 3. Banks: which ones, and do they expose APIs, webhooks, or statement exports only. (Phase 5B covers statement CSV exports; a live bank API is still open.)
 4. Beam SMS: base URL, auth header, sender ID, delivery-report payload, rate limits.
 5. Deposit handling and month-end close rules.
 6. Kenya Data Protection Act: retention and access policy for national IDs,
    bank details and exports.
+7. M-Pesa go-live checklist: Daraja production credentials, registered callback
+   URLs (validation, confirmation, STK) built from `MPESA_CALLBACK_BASE_URL` +
+   `MPESA_CALLBACK_SECRET`, and whether paybill validation is wired to reject
+   anything today (it currently accepts every readable callback).

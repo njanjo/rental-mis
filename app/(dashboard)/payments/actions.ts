@@ -23,6 +23,9 @@ import {
   resolveUnmatched,
   reversePayment,
 } from "@/services/payments";
+import { getTenant } from "@/services/tenants";
+import { initiateStkPush } from "@/services/mpesa";
+import { stkPushRequestSchema } from "@/lib/validation/mpesa";
 
 function requiredId(formData: FormData, field: string, label: string): string {
   const value = stringValue(formData, field);
@@ -141,6 +144,68 @@ export async function ignoreUnmatchedAction(
     await ignoreUnmatched(user, unmatchedId, parsed.data);
     revalidatePaymentSurfaces();
     return formSuccess("Payment left in the queue and marked ignored.");
+  } catch (error) {
+    return toFormState(error);
+  }
+}
+
+/**
+ * Send an M-Pesa STK prompt. Nothing is recorded until the receipt callback
+ * from Daraja confirms the money actually moved — the prompt itself is only a
+ * collect request, which is why it is deliberately cheaper to send than a
+ * recorded receipt.
+ */
+export async function requestStkPushAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  try {
+    const user = await requireSessionUser();
+    assertCapability(user, "reconcile_payments");
+
+    const parsed = parseFormValues(stkPushRequestSchema, {
+      tenantId: stringValue(formData, "tenantId"),
+      amount: stringValue(formData, "amount"),
+      overridePhone: stringValue(formData, "overridePhone"),
+      note: stringValue(formData, "note"),
+    });
+    if (!parsed.ok) return parsed.state;
+
+    const tenant = await getTenant(user, parsed.data.tenantId);
+    if (tenant.status !== "active") {
+      throw new ServiceError(
+        "validation",
+        "Payment prompts can only be sent to active tenants.",
+      );
+    }
+
+    const phoneE164 = parsed.data.overridePhone || tenant.phoneE164;
+    if (!phoneE164) {
+      throw new ServiceError(
+        "validation",
+        "This tenant has no phone number on file. Enter the phone to bill.",
+        {
+          fieldErrors: {
+            overridePhone: ["Enter the phone number to bill."],
+          },
+        },
+      );
+    }
+
+    const accountId = tenant.currentUnitId ?? tenant.id;
+
+    const prompt = await initiateStkPush(user, {
+      phoneE164,
+      amountMinor: parsed.data.amount,
+      tenantId: tenant.id,
+      accountId,
+      note: parsed.data.note,
+    });
+
+    revalidatePaymentSurfaces();
+    return formSuccess(
+      `M-Pesa prompt sent to ${phoneE164} (${prompt.checkoutRequestId}). It completes in under a minute, or when the customer enters their PIN.`,
+    );
   } catch (error) {
     return toFormState(error);
   }

@@ -8,7 +8,7 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phase 5B (bank statement import) complete
+## Status — Phase 5C (M-Pesa callbacks + STK Push) complete
 
 | Phase | Scope | State |
 | --- | --- | --- |
@@ -18,8 +18,8 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 | **4** | **Billing: invoices, allocations, credit, arrears** | **done** |
 | **5A** | **Payments: manual receipts, ledger, unmatched queue, reversals** | **done** |
 | **5B** | **Bank statement CSV import with phone matching** | **done** |
-| 5C | M-Pesa C2B + STK Push webhooks (Cloud Functions) | next |
-| 6 | Automation: Beam SMS outbox, reminders, scheduled jobs | not started |
+| **5C** | **M-Pesa Daraja: C2B paybill callbacks + STK Push (route handlers)** | **done** |
+| 6 | Automation: Beam SMS outbox, reminders, scheduled jobs | next |
 | 7 | Reporting: realtime dashboard, charts, CSV | not started |
 | 8 | Launch: security review, backups, monitoring, training | not started |
 
@@ -128,6 +128,13 @@ tests/rules/              32 allow/deny cases
 - Bank statement import is a CSV wizard at `/payments/import`. It matches by
   payer phone only, imports credits only, and sends anything uncertain to the
   unmatched queue. The preview writes nothing; commit re-parses the file.
+- M-Pesa ingestion (Phase 5C): Daraja C2B paybill callbacks land at
+  `/api/mpesa/confirmation/<MPESA_CALLBACK_SECRET>` (validation and STK Push
+  result callbacks live beside it). Receipts match via the payer phone, feed
+  the same allocation engine as 5A/5B, and store every raw payload in
+  `providerEvents`. Staff can send STK prompts from Payments. Configure the
+  Daraja env vars and register the URLs before go-live — see
+  `.env.local.example` and `docs/DECISIONS.md`.
 - `.env.local` holds emulator routing (`FIRESTORE_EMULATOR_HOST`,
   `FIREBASE_AUTH_EMULATOR_HOST`). Remove those two lines in production.
 - Decisions log: [`docs/DECISIONS.md`](docs/DECISIONS.md).
