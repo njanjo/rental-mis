@@ -483,6 +483,26 @@ async function seedPortfolio(): Promise<void> {
     createdAt: FieldValue.serverTimestamp(),
   });
 
+  // A completed statement import, so the import screen has history on a fresh
+  // seed without needing a real CSV upload.
+  await db.collection("bankSyncRuns").doc("run_demo_statement").set({
+    bankCode: "EQ",
+    fileName: "equity-demo.csv",
+    source: "statement",
+    importedBy: "staff_finance",
+    startedAt: Timestamp.fromDate(new Date(now.getTime() - 2 * 86_400_000)),
+    finishedAt: Timestamp.fromDate(new Date(now.getTime() - 2 * 86_400_000 + 9_000)),
+    status: "succeeded",
+    counts: {
+      fetched: 12,
+      imported: 8,
+      queued: 2,
+      duplicates: 1,
+      skipped: 1,
+      errors: 0,
+    },
+  });
+
   await db.collection("maintenanceRequests").doc("mr_leak_a1").set({
     propertyId: "prop_kilimani",
     unitId: "unit_a1",

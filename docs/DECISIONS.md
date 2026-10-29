@@ -109,11 +109,23 @@ Anything not listed here follows the spec as written.
 - **Ledger order is deterministic.** All allocations of one payment share the transaction timestamp, so the detail view orders them by invoice due date (ties by invoice id), matching the oldest-first plan.
 - **Beam SMS stays post-commit.** Phase 5A does not send messages; the payment transaction owns money, and the SMS outbox (Phase 6) must never block or duplicate a receipt.
 
+## Phase 5B - bank statement CSV import
+
+- **Three steps, one source of truth.** Upload, preview and commit are separate server actions. The preview is advisory and writes nothing; the commit re-parses the same CSV and re-runs the matching, so a stale preview can never move money by itself.
+- **Phone-only matching.** The importer resolves a payer phone through `tenantPhones/{e164}` (the unique-active-phone index), then re-reads the tenant and requires `status === "active"` and a property. Names, references and narrations are never used to guess an owner. Unknown, inactive or unlinked tenants go to the unmatched queue with the reason recorded.
+- **Only credits are imported.** Debits, zero amounts, totals rows, repeated headers and blank lines are counted as skipped, separately from parse errors. A row that cannot be read is an error, not a zero-value receipt.
+- **Parsing is defensive but not clever.** The reader handles a UTF-8 BOM, CRLF, quoted fields spanning lines, preamble banners and page-repeated headers, and detects the header row within the first 25 rows. Manual column mapping and date formats (`auto|dmy|mdy|iso`) exist because Kenyan exports are inconsistent; `auto` is always day-first and never silently US month-first. Malformed money such as `1,2,3` is rejected rather than read as `123`.
+- **Idempotency comes from the payment id.** Statement rows use provider `bank` and the same deterministic `pay_<sha256(bank:reference)>` id as manual entry. Re-importing a file, or importing a reference finance already recorded, counts the row as a duplicate and writes nothing.
+- **Per-row transactions, not one file transaction.** Each receipt commits its own payment + allocation + audit transaction, so one bad row does not roll back the other 1,999. The run document starts as `running`, ends `succeeded` (or `failed`) with counts, and the final update plus `bank_import.committed` audit entry commit together.
+- **Scope is checked at match time.** A tenant outside the actor's properties is queued as `out_of_scope` rather than imported; unmatched receipts have no `propertyId`, consistent with the shared queue. Importing requires both `enter_manual_receipts` and `reconcile_payments`.
+- **Bounded work.** A file may be 2 MB and 2,000 credit rows; the preview renders at most 300 rows. Larger statements must be split by month. Server actions raise the body limit to 4 MB to fit the CSV plus mapping fields.
+- **The run is the audit trail.** `bankSyncRuns` stores the bank code, file name, importer, counts (fetched, imported, queued, duplicates, skipped, errors) and the first row failure, so support can explain an import without re-reading the original file.
+
 ## Still open (needed by Phase 5/6)
 
 1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`).
 2. M-Pesa products: C2B confirmation only, or also STK Push / B2C.
-3. Banks: which ones, and do they expose APIs, webhooks, or statement exports only.
+3. Banks: which ones, and do they expose APIs, webhooks, or statement exports only. (Phase 5B covers statement CSV exports; a live bank API is still open.)
 4. Beam SMS: base URL, auth header, sender ID, delivery-report payload, rate limits.
 5. Deposit handling and month-end close rules.
 6. Kenya Data Protection Act: retention and access policy for national IDs,

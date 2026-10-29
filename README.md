@@ -8,7 +8,7 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phase 5A (payment core) complete
+## Status — Phase 5B (bank statement import) complete
 
 | Phase | Scope | State |
 | --- | --- | --- |
@@ -17,7 +17,8 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 | **3** | **Operations: properties, units, tenants, leases, maintenance** | **done** |
 | **4** | **Billing: invoices, allocations, credit, arrears** | **done** |
 | **5A** | **Payments: manual receipts, ledger, unmatched queue, reversals** | **done** |
-| 5B–5C | Bank statement CSV import; M-Pesa C2B/STK webhooks | next |
+| **5B** | **Bank statement CSV import with phone matching** | **done** |
+| 5C | M-Pesa C2B + STK Push webhooks (Cloud Functions) | next |
 | 6 | Automation: Beam SMS outbox, reminders, scheduled jobs | not started |
 | 7 | Reporting: realtime dashboard, charts, CSV | not started |
 | 8 | Launch: security review, backups, monitoring, training | not started |
@@ -82,13 +83,15 @@ app/
   login/                  staff sign-in (no registration)
 components/
   layout/                 sidebar, topbar, user menu
-  payments/               receipt, match, ignore and reversal dialogs
+  payments/               receipt, match, ignore and reversal dialogs;
+                          bank statement import wizard
   providers/              auth provider (client)
   shared/                 page header, module placeholder, status badges
   ui/                     shadcn primitives
 lib/
   auth/                   permissions matrix, session verification, landing
   allocation.ts           pure oldest-due-first payment planner
+  bank-import.ts          CSV/statement parser, bank list, phone extraction
   billing.ts              period keys, proration, due dates, derived status
   payments.ts             reference normalisation + deterministic payment ids
   firebase/               client + admin singleton
@@ -122,6 +125,9 @@ tests/rules/              32 allow/deny cases
   all collections (including properties, units, tenants, leases and
   maintenance); reads still require an active staff profile.
 - Admin SDK writes bypass rules, so every server path must validate the actor.
+- Bank statement import is a CSV wizard at `/payments/import`. It matches by
+  payer phone only, imports credits only, and sends anything uncertain to the
+  unmatched queue. The preview writes nothing; commit re-parses the file.
 - `.env.local` holds emulator routing (`FIRESTORE_EMULATOR_HOST`,
   `FIREBASE_AUTH_EMULATOR_HOST`). Remove those two lines in production.
 - Decisions log: [`docs/DECISIONS.md`](docs/DECISIONS.md).

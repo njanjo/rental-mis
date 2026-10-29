@@ -1,36 +1,22 @@
 /**
  * Payment identity helpers.
  *
- * Providers send references in several shapes (M-Pesa uses compact uppercase
- * codes, forms allow spaces, statements sometimes lower-case them). Normalising
- * here keeps idempotency deterministic. No Firestore or Node-only APIs live in
- * this module so it stays safe to import from tests.
+ * The normalisation rules live in `lib/payment-reference.ts` (no Node imports,
+ * safe for tests and future client-side previews). This module adds the
+ * deterministic document id, which needs a hash.
  */
 
 import { createHash } from "node:crypto";
 
+import { paymentReferenceKey } from "@/lib/payment-reference";
 import type { PaymentProvider } from "@/lib/types";
 
-/** Providers whose receipt always carries an external reference. */
-export const REFERENCE_REQUIRED_PROVIDERS: PaymentProvider[] = ["mpesa", "bank"];
-
-/**
- * Canonical form of a provider reference for duplicate detection.
- *
- * References are case-insensitive and providers sometimes add spaces. The
- * displayed value keeps the original casing; only the lookup key is folded.
- */
-export function normalisePaymentReference(input: string): string {
-  return input.trim().replace(/\s+/g, "").toUpperCase();
-}
-
-/** Stable idempotency key for a provider transaction. */
-export function paymentReferenceKey(
-  provider: PaymentProvider,
-  reference: string,
-): string {
-  return `${provider}:${normalisePaymentReference(reference)}`;
-}
+export {
+  normalisePaymentReference,
+  paymentReferenceKey,
+  referenceOptional,
+  REFERENCE_REQUIRED_PROVIDERS,
+} from "@/lib/payment-reference";
 
 /**
  * Deterministic payment doc id from provider + reference.
@@ -46,9 +32,4 @@ export function paymentIdForReference(
 ): string {
   const key = paymentReferenceKey(provider, reference);
   return `pay_${createHash("sha256").update(key).digest("hex").slice(0, 24)}`;
-}
-
-/** True when a receipt may omit an external reference (cash entered by staff). */
-export function referenceOptional(provider: PaymentProvider): boolean {
-  return !REFERENCE_REQUIRED_PROVIDERS.includes(provider);
 }

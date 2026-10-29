@@ -1,4 +1,5 @@
 import type {
+  BankSyncStatus,
   Currency,
   InvoiceStatus,
   LeaseStatus,
@@ -13,6 +14,10 @@ import type {
   TenantStatus,
   UnitStatus,
 } from "@/lib/types";
+import type {
+  BankColumnMapping,
+  BankImportDateFormat,
+} from "@/lib/bank-import";
 
 /**
  * View models passed from server components to the UI.
@@ -262,6 +267,94 @@ export interface UnmatchedPaymentListItem {
   reviewedByName?: string;
   reviewedAt?: string;
   createdAt: string;
+}
+
+/** How the importer will treat one statement row. */
+export type BankRowMatch = "tenant" | "unmatched" | "out_of_scope" | "duplicate";
+
+export interface BankImportPreviewRow {
+  /** 1-based line in the uploaded file. */
+  line: number;
+  date: string;
+  reference: string;
+  amountMinor: MinorUnits;
+  payerName?: string;
+  payerPhone?: string;
+  narration?: string;
+  match: BankRowMatch;
+  tenantId?: string;
+  tenantName?: string;
+  /** Why this row will be queued instead of allocated. */
+  reason?: string;
+}
+
+export interface BankImportIssue {
+  line: number;
+  kind: "skipped" | "error";
+  message: string;
+}
+
+export interface BankImportTotals {
+  /** Credit rows that produced a receipt. */
+  dataRows: number;
+  /** Rows that will allocate straight away. */
+  matched: number;
+  unmatched: number;
+  outOfScope: number;
+  duplicates: number;
+  /** Debits, totals and blank lines. */
+  skipped: number;
+  errors: number;
+  /** Sum of importable credits, not net of debits. */
+  amountMinor: MinorUnits;
+}
+
+export interface BankImportPreview {
+  fileName?: string;
+  bankCode: string;
+  headers: string[];
+  /** 1-based line of the detected header row. */
+  headerLine: number;
+  mapping: BankColumnMapping;
+  dateFormat: BankImportDateFormat;
+  /** Capped at 300 rows for display; the commit still imports every row. */
+  rows: BankImportPreviewRow[];
+  issues: BankImportIssue[];
+  totals: BankImportTotals;
+  truncated: boolean;
+}
+
+export interface BankImportResult {
+  runId: string;
+  imported: number;
+  queued: number;
+  duplicates: number;
+  skipped: number;
+  errors: number;
+}
+
+export interface BankImportRunItem {
+  id: string;
+  bankCode: string;
+  fileName?: string;
+  status: BankSyncStatus;
+  fetched: number;
+  imported: number;
+  queued: number;
+  duplicates: number;
+  skipped: number;
+  errors: number;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+/** Client state shared by the preview and commit server actions. */
+export interface BankImportFormState {
+  status: "idle" | "success" | "error";
+  message?: string;
+  fieldErrors?: Record<string, string[]>;
+  preview?: BankImportPreview;
+  result?: BankImportResult;
 }
 
 export interface MaintenanceListItem {

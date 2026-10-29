@@ -9,6 +9,12 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: process.cwd(),
   poweredByHeader: false,
   reactStrictMode: true,
+  experimental: {
+    serverActions: {
+      // A 2 MB statement CSV plus the mapping fields exceeds the 1 MB default.
+      bodySizeLimit: "4mb",
+    },
+  },
 };
 
 export default nextConfig;

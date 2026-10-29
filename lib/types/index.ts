@@ -417,11 +417,21 @@ export interface BankSyncRun {
   finishedAt?: FirestoreTimestamp;
   cursor?: string;
   status: BankSyncStatus;
+  /** Statement imports record the uploaded file for audit. */
+  fileName?: string;
+  source?: "statement" | "api";
+  importedBy?: string;
+  /** First row-level failure, kept for support without blocking the run. */
+  errorSample?: string;
   counts: {
     fetched: number;
     imported: number;
     duplicates: number;
     errors: number;
+    /** Statement rows that went to the unmatched queue instead. */
+    queued?: number;
+    /** Debits, totals and blank lines that were deliberately not imported. */
+    skipped?: number;
   };
 }
 

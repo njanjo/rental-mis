@@ -551,6 +551,47 @@ async function main() {
     `status ${financePayments.status}`,
   );
 
+  record(
+    "payments page links to the statement importer",
+    paymentsHtml.includes("Import statement"),
+    "import link present",
+  );
+
+  const importPage = await fetch(`${baseUrl}/payments/import`, {
+    headers: { Cookie: `__session=${cookie}` },
+  });
+  const importPageHtml = await importPage.text();
+  record(
+    "admin sees the bank statement importer",
+    importPage.status === 200 &&
+      importPageHtml.includes("Import bank statement") &&
+      importPageHtml.includes("Choose a statement") &&
+      importPageHtml.includes("Preview statement") &&
+      importPageHtml.includes("Recent imports") &&
+      importPageHtml.includes("equity-demo.csv"),
+    `status ${importPage.status}`,
+  );
+
+  const financeImport = await fetch(`${baseUrl}/payments/import`, {
+    headers: { Cookie: `__session=${financeCookie}` },
+  });
+  record(
+    "finance can open the bank statement importer",
+    financeImport.status === 200 &&
+      financePaymentsHtml.includes("Import statement"),
+    `status ${financeImport.status}`,
+  );
+
+  const managerImport = await fetch(`${baseUrl}/payments/import`, {
+    headers: { Cookie: `__session=${managerCookie}` },
+    redirect: "manual",
+  });
+  record(
+    "managers are redirected off the statement importer",
+    managerImport.status === 307 || managerImport.status === 302,
+    `status ${managerImport.status}`,
+  );
+
   const managerUnmatched = await fetch(`${baseUrl}/payments/unmatched`, {
     headers: { Cookie: `__session=${managerCookie}` },
     redirect: "manual",

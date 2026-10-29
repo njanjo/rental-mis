@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Banknote, ChevronRight, Inbox, ReceiptText } from "lucide-react";
+import { Banknote, ChevronRight, FileUp, Inbox, ReceiptText } from "lucide-react";
 
 import { RecordReceiptDialog } from "@/components/payments/payment-dialogs";
 import { CursorPagination } from "@/components/shared/cursor-pagination";
@@ -229,6 +229,14 @@ export default async function PaymentsPage({
                       {openUnmatched}
                     </span>
                   ) : null}
+                </Link>
+              </Button>
+            ) : null}
+            {canRecord && canReconcile ? (
+              <Button variant="outline" size="sm" asChild>
+                <Link href="/payments/import">
+                  <FileUp className="size-4" />
+                  Import statement
                 </Link>
               </Button>
             ) : null}

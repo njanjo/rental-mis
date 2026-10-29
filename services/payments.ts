@@ -27,6 +27,7 @@ import type {
   Payment,
   PaymentAllocation,
   PaymentProvider,
+  PaymentSource,
   PaymentStatus,
   ReviewStatus,
   Tenant,
@@ -383,6 +384,254 @@ export async function getPayment(
   };
 }
 
+export interface ConfirmedPaymentInput {
+  provider: PaymentProvider;
+  /** Normalised provider reference; the idempotency key. */
+  providerTransactionId: string;
+  amountMinor: number;
+  receivedAt: Date;
+  tenantId: string;
+  source: PaymentSource;
+  bankCode?: string;
+  narration?: string;
+  payerName?: string;
+  payerPhone?: string;
+  /** Audit verb. Statement imports log `payment.imported`. */
+  auditAction?: "payment.recorded" | "payment.imported";
+  /** Return a duplicate marker instead of throwing. Used by bulk imports. */
+  ignoreDuplicate?: boolean;
+}
+
+export interface PaymentWriteResult {
+  paymentId: string;
+  /** True when the deterministic id already existed and nothing was written. */
+  duplicate: boolean;
+  allocatedMinor: number;
+  creditAddedMinor: number;
+}
+
+/**
+ * Record a confirmed receipt against a tenant and allocate it to that tenant's
+ * oldest invoices in one transaction. Shared by manual entry and statement
+ * imports so both paths allocate identically.
+ *
+ * The payment doc id is derived from provider + reference, so a retried
+ * callback or a re-imported file can never record the same money twice.
+ */
+export async function recordConfirmedPayment(
+  actor: SessionUser,
+  input: ConfirmedPaymentInput,
+): Promise<PaymentWriteResult> {
+  assertCapability(actor, "reconcile_payments");
+
+  const paymentId = paymentIdForReference(
+    input.provider,
+    input.providerTransactionId,
+  );
+
+  const db = adminDb();
+  const paymentRef = db.collection(COLLECTION).doc(paymentId);
+  const tenantRef = db.collection(TENANT_COLLECTION).doc(input.tenantId);
+
+  let result: PaymentWriteResult | undefined;
+
+  await db.runTransaction(async (tx) => {
+    const existing = await tx.get(paymentRef);
+    if (existing.exists) {
+      if (input.ignoreDuplicate) {
+        result = {
+          paymentId,
+          duplicate: true,
+          allocatedMinor: 0,
+          creditAddedMinor: 0,
+        };
+        return;
+      }
+      throw new ServiceError(
+        "conflict",
+        "That reference has already been recorded. Open the existing payment instead.",
+      );
+    }
+
+    const tenantSnapshot = await tx.get(tenantRef);
+    if (!tenantSnapshot.exists) {
+      throw new ServiceError("not_found", "That tenant no longer exists.");
+    }
+    const tenant = tenantSnapshot.data() as Tenant;
+    assertTenantAccess(actor, tenant);
+
+    const propertyId = tenantPropertyId(tenant);
+    if (!propertyId) {
+      throw new ServiceError(
+        "validation",
+        "This tenant is not linked to a property. Add them to a property first.",
+      );
+    }
+
+    // All reads happen before any write: the allocation engine reads the
+    // tenant, open invoices and prior allocations, then updates them.
+    const allocation = await allocateWithinTransaction(tx, actor, {
+      paymentId,
+      tenantId: input.tenantId,
+      amountMinor: input.amountMinor,
+    });
+
+    tx.set(paymentRef, {
+      provider: input.provider,
+      providerTransactionId: input.providerTransactionId,
+      amountMinor: input.amountMinor,
+      currency: "KES",
+      tenantId: input.tenantId,
+      ...(tenant.currentLeaseId ? { leaseId: tenant.currentLeaseId } : {}),
+      propertyId,
+      status: "allocated" satisfies PaymentStatus,
+      source: input.source,
+      ...(input.bankCode ? { bankCode: input.bankCode } : {}),
+      ...(input.narration ? { narration: input.narration } : {}),
+      ...(input.payerName ? { payerName: input.payerName } : {}),
+      ...(input.payerPhone ? { payerPhone: input.payerPhone } : {}),
+      allocatedMinor: allocation.allocatedMinor,
+      creditAddedMinor: allocation.creditAddedMinor,
+      confirmedAt: FieldValue.serverTimestamp(),
+      confirmedBy: actor.uid,
+      receivedAt: Timestamp.fromDate(input.receivedAt),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    writeAuditLog(tx, {
+      actorUid: actor.uid,
+      actorRole: actor.role,
+      action: input.auditAction ?? "payment.recorded",
+      entityType: "payment",
+      entityId: paymentId,
+      after: {
+        provider: input.provider,
+        providerTransactionId: input.providerTransactionId,
+        amountMinor: input.amountMinor,
+        tenantId: input.tenantId,
+        propertyId,
+        source: input.source,
+        allocatedMinor: allocation.allocatedMinor,
+        creditAddedMinor: allocation.creditAddedMinor,
+      },
+    });
+
+    result = {
+      paymentId,
+      duplicate: false,
+      allocatedMinor: allocation.allocatedMinor,
+      creditAddedMinor: allocation.creditAddedMinor,
+    };
+  });
+
+  // The transaction always runs the callback once, so `result` is set.
+  return result as PaymentWriteResult;
+}
+
+export interface UnmatchedPaymentInput {
+  provider: PaymentProvider;
+  providerTransactionId: string;
+  amountMinor: number;
+  receivedAt: Date;
+  source: PaymentSource;
+  /** Why no tenant was chosen. Shown to whoever reviews the queue. */
+  reason: string;
+  candidateTenantIds?: string[];
+  bankCode?: string;
+  narration?: string;
+  payerName?: string;
+  payerPhone?: string;
+  ignoreDuplicate?: boolean;
+}
+
+export interface QueuedPaymentResult {
+  paymentId: string;
+  unmatchedId: string;
+  duplicate: boolean;
+}
+
+/**
+ * Park a receipt in the unmatched queue without guessing an owner. No tenant or
+ * property is written, which is why the queue deliberately sits outside
+ * property scope.
+ */
+export async function recordUnmatchedPayment(
+  actor: SessionUser,
+  input: UnmatchedPaymentInput,
+): Promise<QueuedPaymentResult> {
+  assertCapability(actor, "reconcile_payments");
+
+  const paymentId = paymentIdForReference(
+    input.provider,
+    input.providerTransactionId,
+  );
+  const unmatchedId = `unm_${paymentId}`;
+
+  const db = adminDb();
+  const paymentRef = db.collection(COLLECTION).doc(paymentId);
+  const unmatchedRef = db.collection(UNMATCHED_COLLECTION).doc(unmatchedId);
+
+  let result: QueuedPaymentResult | undefined;
+
+  await db.runTransaction(async (tx) => {
+    const existing = await tx.get(paymentRef);
+    if (existing.exists) {
+      if (input.ignoreDuplicate) {
+        result = { paymentId, unmatchedId, duplicate: true };
+        return;
+      }
+      throw new ServiceError(
+        "conflict",
+        "That reference has already been recorded. Open the existing payment instead.",
+      );
+    }
+
+    tx.set(paymentRef, {
+      provider: input.provider,
+      providerTransactionId: input.providerTransactionId,
+      amountMinor: input.amountMinor,
+      currency: "KES",
+      status: "unmatched" satisfies PaymentStatus,
+      source: input.source,
+      ...(input.bankCode ? { bankCode: input.bankCode } : {}),
+      ...(input.narration ? { narration: input.narration } : {}),
+      ...(input.payerName ? { payerName: input.payerName } : {}),
+      ...(input.payerPhone ? { payerPhone: input.payerPhone } : {}),
+      receivedAt: Timestamp.fromDate(input.receivedAt),
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+
+    tx.set(unmatchedRef, {
+      paymentId,
+      candidateTenantIds: input.candidateTenantIds ?? [],
+      reason: input.reason,
+      reviewStatus: "pending" satisfies ReviewStatus,
+      createdAt: FieldValue.serverTimestamp(),
+    });
+
+    writeAuditLog(tx, {
+      actorUid: actor.uid,
+      actorRole: actor.role,
+      action: "payment.queued_unmatched",
+      entityType: "payment",
+      entityId: paymentId,
+      after: {
+        provider: input.provider,
+        providerTransactionId: input.providerTransactionId,
+        amountMinor: input.amountMinor,
+        source: input.source,
+        reason: input.reason,
+      },
+    });
+
+    result = { paymentId, unmatchedId, duplicate: false };
+  });
+
+  return result as QueuedPaymentResult;
+}
+
 /**
  * Record a receipt finance has already seen on a statement, then allocate it to
  * the tenant's oldest invoices in the same transaction. A duplicate reference
@@ -411,86 +660,21 @@ export async function recordManualReceipt(
   // still has a stable, human-readable identity.
   const reference =
     input.providerTransactionId ?? generatedManualReference(input.receivedAt);
-  const paymentId = paymentIdForReference(input.provider, reference);
 
-  const db = adminDb();
-  const paymentRef = db.collection(COLLECTION).doc(paymentId);
-  const tenantRef = db.collection(TENANT_COLLECTION).doc(input.tenantId);
-
-  await db.runTransaction(async (tx) => {
-    const existing = await tx.get(paymentRef);
-    if (existing.exists) {
-      throw new ServiceError(
-        "conflict",
-        "That reference has already been recorded. Open the existing payment instead.",
-      );
-    }
-
-    const tenantSnapshot = await tx.get(tenantRef);
-    if (!tenantSnapshot.exists) {
-      throw new ServiceError("not_found", "That tenant no longer exists.");
-    }
-    const tenant = tenantSnapshot.data() as Tenant;
-    assertTenantAccess(actor, tenant);
-
-    const propertyId = tenantPropertyId(tenant);
-    if (!propertyId) {
-      throw new ServiceError(
-        "validation",
-        "This tenant is not linked to a property. Add them to a property first.",
-      );
-    }
-
-    // All reads happen before any write: the allocation engine reads the
-    // tenant, open invoices and prior allocations, then updates them.
-    const allocation = await allocateWithinTransaction(tx, actor, {
-      paymentId,
-      tenantId: input.tenantId,
-      amountMinor: input.amount,
-    });
-
-    tx.set(paymentRef, {
-      provider: input.provider,
-      providerTransactionId: reference,
-      amountMinor: input.amount,
-      currency: "KES",
-      tenantId: input.tenantId,
-      ...(tenant.currentLeaseId ? { leaseId: tenant.currentLeaseId } : {}),
-      propertyId,
-      status: "allocated" satisfies PaymentStatus,
-      source: "manual",
-      ...(input.bankCode ? { bankCode: input.bankCode } : {}),
-      ...(input.narration ? { narration: input.narration } : {}),
-      ...(input.payerName ? { payerName: input.payerName } : {}),
-      ...(input.payerPhone ? { payerPhone: input.payerPhone } : {}),
-      allocatedMinor: allocation.allocatedMinor,
-      creditAddedMinor: allocation.creditAddedMinor,
-      confirmedAt: FieldValue.serverTimestamp(),
-      confirmedBy: actor.uid,
-      receivedAt: Timestamp.fromDate(input.receivedAt),
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
-
-    writeAuditLog(tx, {
-      actorUid: actor.uid,
-      actorRole: actor.role,
-      action: "payment.recorded",
-      entityType: "payment",
-      entityId: paymentId,
-      after: {
-        provider: input.provider,
-        providerTransactionId: reference,
-        amountMinor: input.amount,
-        tenantId: input.tenantId,
-        propertyId,
-        allocatedMinor: allocation.allocatedMinor,
-        creditAddedMinor: allocation.creditAddedMinor,
-      },
-    });
+  const result = await recordConfirmedPayment(actor, {
+    provider: input.provider,
+    providerTransactionId: reference,
+    amountMinor: input.amount,
+    receivedAt: input.receivedAt,
+    tenantId: input.tenantId,
+    source: "manual",
+    ...(input.bankCode ? { bankCode: input.bankCode } : {}),
+    ...(input.narration ? { narration: input.narration } : {}),
+    ...(input.payerName ? { payerName: input.payerName } : {}),
+    ...(input.payerPhone ? { payerPhone: input.payerPhone } : {}),
   });
 
-  return paymentId;
+  return result.paymentId;
 }
 
 interface InvoiceReversal {
