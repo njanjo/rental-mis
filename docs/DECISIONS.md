@@ -156,7 +156,47 @@ Anything not listed here follows the spec as written.
 - **Rules change:** `smsOutbox` read relaxed from admin-only to `isFinance()`
   to match the `manage_sms` capability; writes stay server-only.
 
-## Still open (needed by Phase 6/7)
+## Phase 7 - Reporting (realtime dashboard, charts, CSV)
+
+- **Aggregation rules.** `services/reports.ts` computes everything server-side
+  with the Admin SDK, enforcing `view_financials` (dashboard KPIs) or
+  `export_reports` (report tables, CSV) and the caller's property scope the
+  same way as the operational services. Window queries filter a single field
+  (`receivedAt >= start`, `active == true`, `status in [...]`) — no composite
+  indexes — and narrow scope in memory over bounded scans (5 000 docs).
+- **"Collected" definition.** A payment counts when `receivedAt` falls in the
+  window, summed as *signed* minor units across `confirmed`, `allocated` and
+  `reversal` rows. The reversal ledger row carries a negative amount created
+  at reversal time, so month sums are already net. Statuses `received`
+  (unconfirmed M-Pesa), `unmatched`, `rejected` and `reversed` are never
+  counted.
+- **Months are Nairobi months.** Bucket keys are `YYYY-MM` computed with
+  `Intl` in `Africa/Nairobi` (`nairobiMonthKey`); `monthBounds` turns a key
+  into fixed `+03:00` month edges with no DST math. Arrears ageing uses whole
+  UTC-day buckets (same trick as the SMS reminders).
+- **"Realtime" without rules gaps.** Dashboard KPIs render from the Admin SDK
+  on `force-dynamic` routes and `AutoRefresh` re-fetches on a 60s interval.
+  Client `onSnapshot` was rejected: payment rules do not allow
+  `property_manager` direct reads (`canViewFinance` excludes that role), so
+  client listeners would either leak nothing or need a rules change; server
+  aggregation + refresh gives live numbers with zero rule changes. This is a
+  conscious trade-off: eventual-seconds freshness instead of true streams.
+- **Charts are server-rendered HTML, not a chart library.** `ColumnChart` and
+  `ShareBars` (flex + div heights, `title` tooltips) keep the client bundle
+  flat; no JS is shipped for the reporting pages.
+- **CSV is a GET route, not an action.** `GET /api/reports/csv?type=payments|arrears`
+  returns `text/csv` with a `Content-Disposition: attachment` filename and
+  `no-store`. Files are RFC 4180-quoted with CRLF rows and a UTF-8 BOM (Excel
+  compatibility), amounts as bare `45000.00` KES decimals. Every download is
+  audit logged (`report.exported` with `actorUid`, from/to) because exported
+  money data leaves the system; the actor still comes from the verified
+  session cookie.
+- **Scope caveat, documented.** When a scoped user's property list exceeds a
+  scan window the aggregate is over the latest 5 000 docs only; with realistic
+  portfolios (hundreds of units) this cannot bite, and unbounded reads of all
+  money data were never on the table.
+
+## Still open (needed by Phase 7/8)
 
 1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`; a `prod` alias was drafted locally).
 2. ~~M-Pesa products~~ — Phase 5C shipped C2B confirmation + STK Push; B2C (refunds/deposits) is still out of scope.

@@ -6,26 +6,26 @@ import "server-only";
  * Everything is read-only and computed on the server with the Admin SDK, so
  * every function takes the actor and enforces capability + property scope the
  * same way the operational services do. Aggregations deliberately avoid
- * composite indexes: windows filter on one field and the rest of the narrowing
- * (scope, statuses) happens in memory over bounded scans.
+ * composite indexes: window queries filter on one field, and the rest of the
+ * narrowing (scope, statuses) happens in memory over bounded scans.
  *
- * Money rules ("collected"): payments whose `receivedAt` falls in the window
- * count, summed as signed minor units. A reversal row carries a negative
- * amount created at reversal time, which makes the window sum the *net* cash
- * for each month without extra lookups. Unconfirmed ("received") M-Pesa
- * payloads are excluded — they are not yet reconciled money.
+ * Money rule ("collected"): a payment counts when its `receivedAt` falls in
+ * the window, summed as *signed* minor units. A reversal row carries a
+ * negative amount created at reversal time, so the window sum is the net cash
+ * per month without extra lookups. Unconfirmed ("received") M-Pesa payloads
+ * are excluded — they are not yet reconciled money.
  */
 
-import { Timestamp } from "firebase-admin/firestore";
+import { FieldPath, Timestamp } from "firebase-admin/firestore";
 
 import type { SessionUser } from "@/lib/auth/session";
+import { assertCapability, scopePropertyIds } from "@/lib/auth/scope";
 import {
-  scopePropertyIds,
-  type ScopeUpdate,
-  assertCapability,
-  hasGlobalScope,
-} from "@/lib/auth/scope";
-import { monthBounds, nairobiMonthKey, parseDateInput, toIsoString } from "@/lib/dates";
+  monthBounds,
+  nairobiMonthKey,
+  parseDateInput,
+  toIsoString,
+} from "@/lib/dates";
 import { ServiceError } from "@/lib/errors";
 import { adminDb } from "@/lib/firebase/admin";
 import type {
@@ -37,6 +37,7 @@ import type {
   Tenant,
   Unit,
 } from "@/lib/types";
+import type { Capability } from "@/lib/auth/permissions";
 
 const PAYMENTS = "payments";
 const INVOICES = "invoices";
@@ -50,18 +51,20 @@ const SCAN_LIMIT = 5_000;
 /** Statuses that contribute real money; reversal rows are negative sums. */
 const CASH_STATUSES: PaymentStatus[] = ["confirmed", "allocated", "reversal"];
 
-/** Statuses that still represent money owed on an invoice. */
+/** Invoice statuses that still represent money owed. */
 const OUTSTANDING_STATUSES = ["open", "partial", "overdue"] as const;
 
 export interface DashboardStats {
-  /** Units that are active reports: occupied vs the total active stock. */
+  /** Occupied units vs the total of active stock. */
   occupancy: { occupied: number; total: number };
   /** Net money received in the Nairobi month in progress. */
   collectedThisMonthMinor: number;
   /** Sum of live invoice balances. */
   arrearsMinor: number;
-  /** Invoices awaiting payment, for display next to the arrears total. */
+  /** Invoices awaiting payment, displayed next to the arrears total. */
   arrearsInvoiceCount: number;
+  /** Payments sitting in the unmatched review queue, in scope. */
+  unmatchedCount: number;
 }
 
 export interface AgingBucket {
@@ -82,24 +85,38 @@ export interface NamedBreakdown {
   minor: number;
 }
 
-interface ScopedSnapshot {
-  scope: string[] | null;
-  docs: Array<{ propertyId?: string; data: unknown }>;
-}
-
 function inScope(scope: string[] | null, propertyId?: string): boolean {
   if (!scope) return true;
   return Boolean(propertyId && scope.includes(propertyId));
 }
 
-/** Confirm the actor may look at money and returns their property scope. */
-function reportingScope(actor: SessionUser, capability: Parameters<typeof assertCapability>[1]): {
-  scope: string[] | null;
-} {
+function assertAndScope(
+  actor: SessionUser,
+  capability: Capability,
+): string[] | null {
   assertCapability(actor, capability);
-  return { scope: scopePropertyIds(actor) };
+  return scopePropertyIds(actor);
 }
 
+/** Instant in milliseconds; unknown-shaped values sort to infinity. */
+function toMillis(value: unknown): number {
+  if (value instanceof Timestamp) return value.toMillis();
+  if (value instanceof Date) return value.getTime();
+  if (
+    value &&
+    typeof value === "object" &&
+    "toDate" in (value as Record<string, unknown>)
+  ) {
+    return (value as Timestamp).toDate().getTime();
+  }
+  if (typeof value === "string" || typeof value === "number") {
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? Number.POSITIVE_INFINITY : date.getTime();
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
+/** Payments received since `start`, scope-filtered in memory. */
 async function paymentsSince(
   start: Date,
   scope: string[] | null,
@@ -114,9 +131,7 @@ async function paymentsSince(
     .filter((payment) => inScope(scope, payment.propertyId));
 }
 
-async function outstandingInvoices(
-  scope: string[] | null,
-): Promise<Invoice[]> {
+async function outstandingInvoices(scope: string[] | null): Promise<Invoice[]> {
   const snapshot = await adminDb()
     .collection(INVOICES)
     .where("status", "in", [...OUTSTANDING_STATUSES])
@@ -138,9 +153,11 @@ async function activeUnits(scope: string[] | null): Promise<Unit[]> {
     .filter((unit) => inScope(scope, unit.propertyId));
 }
 
-/** Property id -> name, resolved via chunked document lookups. */
 async function propertyNames(scope: string[] | null): Promise<Map<string, string>> {
-  const snapshot = await adminDb().collection(PROPERTIES).limit(SCAN_LIMIT).get();
+  const snapshot = await adminDb()
+    .collection(PROPERTIES)
+    .limit(SCAN_LIMIT)
+    .get();
   const map = new Map<string, string>();
   snapshot.docs.forEach((doc) => {
     const property = doc.data() as Property;
@@ -151,15 +168,12 @@ async function propertyNames(scope: string[] | null): Promise<Map<string, string
 
 async function tenantNames(tenantIds: string[]): Promise<Map<string, string>> {
   const map = new Map<string, string>();
-  if (tenantIds.length === 0) return map;
-  const unique = [...new Set(tenantIds)];
-  const db = adminDb();
-  // Firestore allows at most 30 values per `in` chunk.
+  const unique = [...new Set(tenantIds.filter(Boolean))];
   for (let index = 0; index < unique.length; index += 30) {
     const chunk = unique.slice(index, index + 30);
-    const snapshot = await db
+    const snapshot = await adminDb()
       .collection(TENANTS)
-      .where("__name__", "in", chunk)
+      .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
       map.set(doc.id, (doc.data() as Tenant).fullName);
@@ -168,25 +182,31 @@ async function tenantNames(tenantIds: string[]): Promise<Map<string, string>> {
   return map;
 }
 
-/** Signed net money for payments, grouping by month key. */
-function sumPayments(payments: Payment[]): number {
+function signedSum(payments: Payment[]): number {
   return payments.reduce(
     (total, payment) =>
-      CASH_STATUSES.includes(payment.status) ? total + (payment.amountMinor ?? 0) : total,
+      CASH_STATUSES.includes(payment.status)
+        ? total + (payment.amountMinor ?? 0)
+        : total,
     0,
   );
 }
 
+// ---------------------------------------------------------------------------
+// Dashboard + report aggregations
+// ---------------------------------------------------------------------------
+
 export async function dashboardStats(
   actor: SessionUser,
 ): Promise<DashboardStats> {
-  const { scope } = reportingScope(actor, "view_financials");
+  // Dashboard KPIs are financial figures; the view_financials matrix applies.
+  const scope = assertAndScope(actor, "view_financials");
 
   const now = new Date();
   const currentMonth = monthBounds(nairobiMonthKey(now));
-  const monthPayments = await paymentsSince(currentMonth.start, scope);
 
-  const [units, invoices, unmatchedSnapshot] = await Promise.all([
+  const [monthPayments, units, invoices, unmatchedSnapshot] = await Promise.all([
+    paymentsSince(currentMonth.start, scope),
     activeUnits(scope),
     outstandingInvoices(scope),
     adminDb()
@@ -196,89 +216,83 @@ export async function dashboardStats(
       .get(),
   ]);
 
-  // Unmatched rows carry no property of their own; they inherit it from the
-  // payment they queue. Resolve that link before scope-filtering.
-  const unmatchedPaymentIds = unmatchedSnapshot.docs.map(
+  // Unmatched rows carry no propertyId of their own; scope them by finding the
+  // property of the payment each queue row points at.
+  const queuePaymentIds = unmatchedSnapshot.docs.map(
     (doc) => (doc.data() as { paymentId: string }).paymentId,
   );
-  const unmatchedLookup = new Map<string, string | undefined>();
-  for (let index = 0; index < unmatchedPaymentIds.length; index += 30) {
-    const chunk = unmatchedPaymentIds.slice(index, index + 30);
+  const paymentProperties = new Map<string, string | undefined>();
+  for (let index = 0; index < queuePaymentIds.length; index += 30) {
+    const chunk = queuePaymentIds.slice(index, index + 30);
     const docs = await adminDb()
       .collection(PAYMENTS)
-      .where("__name__", "in", chunk)
+      .where(FieldPath.documentId(), "in", chunk)
       .get();
     docs.docs.forEach((doc) => {
-      unmatchedLookup.set(doc.id, (doc.data() as Payment).propertyId);
+      paymentProperties.set(doc.id, (doc.data() as Payment).propertyId);
     });
   }
   const unmatchedCount = unmatchedSnapshot.docs.filter((doc) =>
     inScope(
       scope,
-      unmatchedLookup.get((doc.data() as { paymentId: string }).paymentId),
+      paymentProperties.get((doc.data() as { paymentId: string }).paymentId),
     ),
   ).length;
 
-  const occupied = units.filter((unit) => unit.status === "occupied").length;
-  const arrearsMinor = invoices.reduce(
-    (total, invoice) => total + (invoice.balanceMinor ?? 0),
-    0,
-  );
-
   return {
-    occupancy: { occupied, total: units.length },
-    collectedThisMonthMinor: sumPayments(
-      monthPayments.filter((payment) => toMillis(payment.createdAt) < currentMonth.end.getTime()),
+    occupancy: {
+      occupied: units.filter((unit) => unit.status === "occupied").length,
+      total: units.length,
+    },
+    collectedThisMonthMinor: signedSum(
+      monthPayments.filter(
+        (payment) => toMillis(payment.receivedAt) < currentMonth.end.getTime(),
+      ),
     ),
-    arrearsMinor,
+    arrearsMinor: invoices.reduce(
+      (total, invoice) => total + (invoice.balanceMinor ?? 0),
+      0,
+    ),
     arrearsInvoiceCount: invoices.length,
-    ...(unmatchedCount >= 0 ? {} : {}),
-  } as DashboardStats & { unmatchedCount: number } extends never ? never : DashboardStats;
+    unmatchedCount,
+  };
 }
 
-function toMillis(value: unknown): number {
-  if (value instanceof Timestamp) return value.toMillis();
-  if (value instanceof Date) return value.getTime();
-  if (typeof value === "string") {
-    const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? Number.POSITIVE_INFINITY : date.getTime();
-  }
-  return Number.POSITIVE_INFINITY;
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** "Oct 2026" labelling, exported for tables and charts. */
+export function monthLabel(monthKey: string): string {
+  const name = MONTH_NAMES[Number(monthKey.split("-")[1]) - 1];
+  return name ? `${name} ${monthKey.split("-")[0]}` : monthKey;
 }
 
-/** Last `months` Nairobi months including the current one, oldest first. */
 export async function collectionTrend(
   actor: SessionUser,
   months = 6,
 ): Promise<MonthPoint[]> {
-  const { scope } = reportingScope(actor, "view_financials");
+  const scope = assertAndScope(actor, "view_financials");
+  const clamped = Math.min(Math.max(months, 1), 24);
 
-  // Walk back to the start of the month `months - 1` ago.
-  const key = nairobiMonthKey(new Date());
-  let bounds = monthBounds(key);
-  let keys = [key];
-  for (let step = 1; step < months; step += 1) {
-    const [year, month] = bounds.nextKey.split("-").map(Number) as [number, number];
-    let previousMonth = month - 1;
-    let previousYear = year;
-    if (previousMonth === 0) {
-      previousMonth = 12;
-      previousYear -= 1;
-    }
-    const previousKey = `${previousYear}-${String(previousMonth).padStart(2, "0")}`;
-    bounds = monthBounds(previousKey);
-    keys = [previousKey, ...keys];
+  const currentKey = nairobiMonthKey(new Date());
+  const keys: string[] = [];
+  let key = currentKey;
+  for (let step = 0; step < clamped; step += 1) {
+    keys.unshift(key);
+    const [year, month] = key.split("-").map(Number) as [number, number];
+    const previousMonth = month === 1 ? 12 : month - 1;
+    const previousYear = month === 1 ? year - 1 : year;
+    key = `${previousYear}-${String(previousMonth).padStart(2, "0")}`;
   }
+  const first = monthBounds(keys[0]);
 
-  const payments = await paymentsSince(bounds.start, scope);
+  const payments = await paymentsSince(first.start, scope);
   const totals = new Map<string, number>(keys.map((k) => [k, 0]));
   for (const payment of payments) {
     if (!CASH_STATUSES.includes(payment.status)) continue;
-    const paymentKey = nairobiMonthKey(
-      typeof payment.receivedAt === "object" && payment.receivedAt !== null && "toDate" in (payment.receivedAt as object)
-        ? (payment.receivedAt as Timestamp).toDate()
-        : new Date(String(payment.receivedAt)),
-    );
+    const paymentKey = nairobiMonthKey(toMillis(payment.receivedAt));
     if (!totals.has(paymentKey)) continue;
     totals.set(paymentKey, (totals.get(paymentKey) ?? 0) + (payment.amountMinor ?? 0));
   }
@@ -290,25 +304,12 @@ export async function collectionTrend(
   }));
 }
 
-const MONTH_NAMES = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
-
-export function monthLabel(monthKey: string): string {
-  const [year, month] = monthKey.split("-");
-  const name = MONTH_NAMES[Number(month) - 1] ?? month;
-  return `${name} ${year}`;
-}
-
-/** Arrears by days past due: not yet due, 1-30, 31-60, 61-90, 90+. */
-export async function arrearsAging(
-  actor: SessionUser,
-): Promise<AgingBucket[]> {
-  const { scope } = reportingScope(actor, "view_financials");
+/** Arrears by days past due: not yet due, 1–30, 31–60, 61–90, 90+. */
+export async function arrearsAging(actor: SessionUser): Promise<AgingBucket[]> {
+  const scope = assertAndScope(actor, "view_financials");
   const invoices = await outstandingInvoices(scope);
 
-  const nowDays = Math.floor(Date.now() / 86_400_000);
+  const todayDays = Math.floor(Date.now() / 86_400_000);
   const buckets: AgingBucket[] = [
     { label: "Not yet due", minor: 0, invoices: 0 },
     { label: "1–30 days", minor: 0, invoices: 0 },
@@ -318,28 +319,48 @@ export async function arrearsAging(
   ];
 
   for (const invoice of invoices) {
-    const due = toMillis(invoice.dueDate) / 86_400_000;
-    const daysOverdue = Math.max(0, Math.floor(nowDays) - Math.floor(due));
-    const bucketIndex =
-      daysOverdue <= 0 ? 0 : daysOverdue <= 30 ? 1 : daysOverdue <= 60 ? 2 : daysOverdue <= 90 ? 3 : 4;
-    buckets[bucketIndex].minor += invoice.balanceMinor ?? 0;
-    buckets[bucketIndex].invoices += 1;
+    const daysOverdue = Math.max(
+      0,
+      todayDays - Math.floor(toMillis(invoice.dueDate) / 86_400_000),
+    );
+    const index = bucketIndexForDays(daysOverdue);
+    buckets[index].minor += invoice.balanceMinor ?? 0;
+    buckets[index].invoices += 1;
   }
   return buckets;
 }
 
-/** Net money grouped by one dimension over a window. */
+function bucketIndexForDays(days: number): 0 | 1 | 2 | 3 | 4 {
+  if (days <= 0) return 0;
+  if (days <= 30) return 1;
+  if (days <= 60) return 2;
+  if (days <= 90) return 3;
+  return 4;
+}
+
+/** Windowed payments after the report capability and scope are enforced. */
 async function windowPayments(
   actor: SessionUser,
   from: Date,
   to: Date,
 ): Promise<Payment[]> {
-  const { scope } = reportingScope(actor, "export_reports");
+  const scope = assertAndScope(actor, "export_reports");
   const payments = await paymentsSince(from, scope);
   const end = to.getTime();
   return payments.filter(
-    (payment) => toMillis(payment.receivedAt) < end && CASH_STATUSES.includes(payment.status),
+    (payment) =>
+      toMillis(payment.receivedAt) < end && CASH_STATUSES.includes(payment.status),
   );
+}
+
+const PROVIDER_LABELS: Record<PaymentProvider, string> = {
+  mpesa: "M-Pesa",
+  bank: "Bank",
+  manual: "Manual receipt",
+};
+
+export function providerLabel(provider: string): string {
+  return PROVIDER_LABELS[provider as PaymentProvider] ?? provider;
 }
 
 export async function incomeByProperty(
@@ -348,11 +369,13 @@ export async function incomeByProperty(
   to: Date,
 ): Promise<NamedBreakdown[]> {
   const payments = await windowPayments(actor, from, to);
-  const names = await propertyNames(scopeOf(actor));
+  const scope = hasGlobalScope(actor) ? null : [...new Set(actor.propertyIds)];
+  const names = await propertyNames(scope);
+
   return groupTotals(payments, (payment) => payment.propertyId ?? "unassigned")
     .map(({ id, minor }) => ({
       id,
-      label: names.get(id) ?? "Not assigned to a property",
+      label: names.get(id) ?? "Not matched to a property",
       minor,
     }))
     .sort((a, b) => b.minor - a.minor || a.label.localeCompare(b.label));
@@ -365,43 +388,46 @@ export async function incomeByChannel(
 ): Promise<NamedBreakdown[]> {
   const payments = await windowPayments(actor, from, to);
   return groupTotals(payments, (payment) => payment.provider).map(
-    ({ id, minor }) => ({ id, label: providerLabel(id as PaymentProvider), minor }),
+    ({ id, minor }) => ({ id, label: providerLabel(id), minor }),
   );
 }
 
-const PROVIDER_LABELS: Record<PaymentProvider, string> = {
-  mpesa: "M-Pesa",
-  bank: "Bank",
-  manual: "Manual receipt",
-};
+/** Net money grouped by Nairobi month inside the window, oldest first. */
+export async function incomeByMonth(
+  actor: SessionUser,
+  from: Date,
+  to: Date,
+): Promise<MonthPoint[]> {
+  const payments = await windowPayments(actor, from, to);
+  const totals = new Map<string, number>();
+  for (const payment of payments) {
+    const key = nairobiMonthKey(toMillis(payment.receivedAt));
+    totals.set(key, (totals.get(key) ?? 0) + (payment.amountMinor ?? 0));
+  }
+  return [...totals.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, minor]) => ({ key, label: monthLabel(key), minor }));
+}
 
-export function providerLabel(provider: PaymentProvider): string {
-  return PROVIDER_LABELS[provider] ?? provider;
+function hasGlobalScope(actor: SessionUser): boolean {
+  return actor.role === "admin" || actor.role === "auditor";
 }
 
 function groupTotals(
   payments: Payment[],
   keyOf: (payment: Payment) => string,
 ): Array<{ id: string; minor: number }> {
-  return [...groupTotalsMap(payments, keyOf).entries()]
+  const totals = new Map<string, number>();
+  for (const payment of payments) {
+    totals.set(keyOf(payment), (totals.get(keyOf(payment)) ?? 0) + (payment.amountMinor ?? 0));
+  }
+  return [...totals.entries()]
     .map(([id, minor]) => ({ id, minor }))
     .sort((a, b) => b.minor - a.minor);
 }
 
-function groupTotalsMap(
-  payments: Payment[],
-  keyOf: (payment: Payment) => string,
-): Map<string, number> {
-  const totals = new Map<string, number>();
-  for (const payment of payments) {
-    const key = keyOf(payment);
-    totals.set(key, (totals.get(key) ?? 0) + (payment.amountMinor ?? 0));
-  }
-  return totals;
-}
-
 // ---------------------------------------------------------------------------
-// CSV exports
+// CSV export row builders
 // ---------------------------------------------------------------------------
 
 export interface PaymentExportRow {
@@ -421,11 +447,11 @@ export async function paymentsForExport(
   to: Date,
 ): Promise<PaymentExportRow[]> {
   const payments = await windowPayments(actor, from, to);
-  const names = await propertyNames(scopeOf(actor));
-  const scopedPaymentIds = payments
-    .filter((payment) => payment.tenantId)
-    .map((payment) => payment.tenantId as string);
-  const tenants = await tenantNames(scopedPaymentIds);
+  const scope = hasGlobalScope(actor) ? null : [...new Set(actor.propertyIds)];
+  const [names, tenants] = await Promise.all([
+    propertyNames(scope),
+    tenantNames(payments.filter((p) => p.tenantId).map((p) => p.tenantId as string)),
+  ]);
 
   return payments
     .map((payment) => ({
@@ -458,23 +484,23 @@ export interface ArrearsExportRow {
 export async function arrearsForExport(
   actor: SessionUser,
 ): Promise<ArrearsExportRow[]> {
-  const { scope } = scopeOfForExport(actor);
+  const scope = assertAndScope(actor, "export_reports");
   const [invoices, names, unitsSnapshot] = await Promise.all([
     outstandingInvoices(scope),
     propertyNames(scope),
     adminDb().collection(UNITS).limit(SCAN_LIMIT).get(),
   ]);
+  const tenantMap = await tenantNames(
+    invoices.filter((invoice) => invoice.tenantId).map((i) => i.tenantId),
+  );
   const unitNumbers = new Map<string, string>();
   unitsSnapshot.docs.forEach((doc) => {
     unitNumbers.set(doc.id, (doc.data() as Unit).unitNumber);
   });
-  const tenants = await tenantNames(
-    invoices.filter((invoice) => invoice.tenantId).map((i) => i.tenantId),
-  );
 
   return invoices
     .map((invoice) => ({
-      tenant: tenants.get(invoice.tenantId) ?? "—",
+      tenant: tenantMap.get(invoice.tenantId) ?? "—",
       property: names.get(invoice.propertyId) ?? "—",
       unit: unitNumbers.get(invoice.unitId) ?? "—",
       periodKey: invoice.periodKey,
@@ -487,58 +513,52 @@ export async function arrearsForExport(
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
 
-function scopeOfForExport(actor: SessionUser): {
-  scope: string[] | null;
-} {
-  assertCapability(actor, "export_reports");
-  return { scope: scopePropertyIds(actor) };
-}
-
-function scopeOf(actor: SessionUser): string[] | null {
-  // Aggregation helpers called after windowPayments have already asserted the
-  // capability; this re-derives the scope without a second permission check.
-  return hasGlobalScope(actor) ? null : [...new Set(actor.propertyIds)];
-}
-
 // ---------------------------------------------------------------------------
-// Window parsing shared by the reports page and the CSV route
+// Report window parsing shared by the reports page and the CSV route
 // ---------------------------------------------------------------------------
 
 export interface ReportWindow {
+  /** Inclusive lower bound (midnight Nairobi on `from`). */
   from: Date;
+  /** Exclusive upper bound (midnight Nairobi the day after `to`). */
   to: Date;
   fromInput: string;
   toInput: string;
 }
 
 /**
- * Parse the `from`/`to` form values; defaults to the last 90 Nairobi days,
- * inclusive of today. `to` is treated as an exclusive upper bound internally
- * but inclusive in the UI (end of that day).
+ * Parse `from`/`to` form values; default to the trailing 90 days, inclusive
+ * of today. The UI treats both edges as inclusive days.
  */
 export function parseReportWindow(
   fromInput?: string,
   toInput?: string,
 ): ReportWindow {
   const fallbackTo = new Date();
-  const fallbackFrom = new Date(fallbackTo.getTime() - 89 * 86_400_000);
-
-  const to = toInput ? parseDateInput(toInput) : fallbackTo;
-  const from = fromInput ? parseDateInput(fromInput) : fallbackFrom;
-  if (
-    !to ||
-    !from ||
-    (fromInput && !parseDateInput(fromInput)) ||
-    (toInput && !parseDateInput(toInput))
-  ) {
-    throw new ServiceError("validation", "Dates must be valid calendar days.");
+  if (fromInput && !parseDateInput(fromInput)) {
+    throw new ServiceError("validation", "`from` must be a valid calendar day.");
   }
-  // Include the whole of the `to` day: shift the exclusive end past midnight.
+  if (toInput && !parseDateInput(toInput)) {
+    throw new ServiceError("validation", "`to` must be a valid calendar day.");
+  }
+  const to = toInput ? parseDateInput(toInput) : fallbackTo;
+  const from =
+    fromInput
+      ? parseDateInput(fromInput)
+      : new Date(fallbackTo.getTime() - 89 * 86_400_000);
+  if (!to || !from) {
+    throw new ServiceError("validation", "A valid date range is required.");
+  }
+  // Include the whole of the `to` day by making the bound exclusive.
   const end = new Date(to.getTime() + 86_400_000);
   if (end.getTime() <= from.getTime()) {
-    throw new ServiceError("validation", "The 'to' date must be after 'from'.");
+    throw new ServiceError("validation", "The `to` date must be after `from`.");
   }
-  return { from, to: end, fromInput: from.toISOString().slice(0, 10), toInput: to.toISOString().slice(0, 10) };
+  // Unknown-shaped seconds are impossible after parseDateInput.
+  return {
+    from,
+    to: end,
+    fromInput: from.toISOString().slice(0, 10),
+    toInput: to.toISOString().slice(0, 10),
+  };
 }
-
-export type { ScopeUpdate };

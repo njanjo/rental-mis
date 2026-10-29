@@ -8,7 +8,7 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phase 6 (Beam SMS receipts + rent reminders) complete
+## Status — Phase 7 (Reporting: realtime dashboard, charts, CSV) complete
 
 | Phase | Scope | State |
 | --- | --- | --- |
@@ -20,7 +20,7 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 | **5B** | **Bank statement CSV import with phone matching** | **done** |
 | **5C** | **M-Pesa Daraja: C2B paybill callbacks + STK Push (route handlers)** | **done** |
 | **6** | **Automation: Beam SMS outbox, receipts, rent reminders, cron route** | **done** |
-| 7 | Reporting: realtime dashboard, charts, CSV | next |
+| **7** | **Reporting: realtime dashboard, charts, CSV exports** | **done** |
 | 8 | Launch: security review, backups, monitoring, training | not started |
 
 ## Stack
@@ -141,6 +141,13 @@ tests/rules/              32 allow/deny cases
   chase, `consentSms`-gated) generate idempotently via campaign ids. The
   scheduler hits `GET /api/cron/<CRON_SECRET>?job=all`; the SMS page has
   run-now buttons. Delivery is polled from Beam — no webhook exists.
+- Reporting (Phase 7): the dashboard renders live KPIs (occupancy, collected
+  this month, arrears, unmatched queue) from server aggregations and
+  auto-refreshes every 60s; `/reports` adds a date range with income by
+  month/channel/property, arrears ageing and CSV downloads from
+  `GET /api/reports/csv?type=payments|arrears&from&to` (session + `export_reports`
+  + audit log). "Collected" counts confirmed money net of reversal rows;
+  unconfirmed M-Pesa payloads are never counted.
 - `.env.local` holds emulator routing (`FIRESTORE_EMULATOR_HOST`,
   `FIREBASE_AUTH_EMULATOR_HOST`). Remove those two lines in production.
 - Decisions log: [`docs/DECISIONS.md`](docs/DECISIONS.md).
