@@ -20,7 +20,7 @@ export const DEFAULT_SMS_TEMPLATES: Record<
   string
 > = {
   payment_receipt:
-    "Receipt {{reference}}: {{amount}} received on {{date}}. Rent reconciled. {{balanceNote}}Thank you.",
+    "Receipt {{reference}}: {{amount}} received on {{date}}. Rent reconciled. {{balanceNote}} Thank you.",
   rent_due_reminder:
     "Hello {{name}}, rent of {{amount}} is due on {{dueDate}}. Pay via M-Pesa or bank. {{balanceNote}}",
   arrears_notice:
@@ -135,9 +135,9 @@ export function beamMessageIdFromSend(
 
   const data = record.data;
   if (typeof data === "string" && data.trim()) {
-    // A bare uid string is the happy path; prose like "sms reports with all
-    // details" is a string of words — treat only uid-shaped strings as ids.
-    return /^[a-z0-9]{10,}$/i.test(data.trim()) ? data.trim() : undefined;
+    // A single token without whitespace is the uid happy path; prose such as
+    // "sms reports with all details" never qualifies.
+    return /^[A-Za-z0-9_-]{10,}$/.test(data.trim()) ? data.trim() : undefined;
   }
   if (data && typeof data === "object") {
     const nested = data as { uid?: unknown; id?: unknown };

@@ -199,25 +199,29 @@ type OutboxSnapshot = QueryDocumentSnapshot;
 
 async function markAttempt(
   snapshot: OutboxSnapshot,
-  attempts: number,
-  extras: { messageId?: string; errorMessage?: string },
+  result: { kind: "sent"; messageId?: string } | { kind: "failed"; errorMessage: string },
 ): Promise<void> {
   const db = adminDb();
   const ref = db.collection(OUTBOX).doc(snapshot.id);
+  const attempts = ((snapshot.data() as SmsOutboxItem).attempts ?? 0) + 1;
 
-  if (extras.messageId) {
+  if (result.kind === "sent") {
+    // Accepted by Beam even when the reply made no uid available; delivery
+    // polling simply has nothing to key on until it shows up in the list.
     await db.runTransaction(async (tx) => {
       tx.update(ref, {
         status: "sent" satisfies SmsStatus,
         attempts,
-        providerMessageId: extras.messageId,
+        ...(result.messageId
+          ? { providerMessageId: result.messageId }
+          : {}),
         lastError: FieldValue.delete(),
         updatedAt: FieldValue.serverTimestamp(),
       });
       tx.create(
         db.collection(SMS_LOGS).doc(),
         logRow(snapshot.id, "sent", {
-          providerMessageId: extras.messageId,
+          providerMessageId: result.messageId,
         }),
       );
     });
@@ -228,7 +232,7 @@ async function markAttempt(
   await ref.update({
     status: deadLetter ? ("dead_letter" satisfies SmsStatus) : "failed",
     attempts,
-    lastError: extras.errorMessage ?? "Beam send failed.",
+    lastError: result.errorMessage,
     ...(deadLetter
       ? {}
       : {
@@ -242,9 +246,7 @@ async function markAttempt(
     .collection(SMS_LOGS)
     .doc()
     .create(
-      logRow(snapshot.id, "failed", {
-        errorMessage: extras.errorMessage,
-      }),
+      logRow(snapshot.id, "failed", { errorMessage: result.errorMessage }),
     );
 }
 
@@ -256,8 +258,6 @@ async function sendOne(
   const item = snapshot.data() as SmsOutboxItem;
   const attempts = item.attempts + 1;
 
-  let providerMessageId: string | undefined;
-  let errorMessage: string | undefined;
   try {
     const response = await fetchImpl(`${config.baseUrl}/sms/send`, {
       method: "POST",
@@ -272,28 +272,27 @@ async function sendOne(
       ),
     });
 
-    const payload = (await response.json().catch(() => undefined)) as unknown;
-    if (response.ok) {
-      providerMessageId = beamMessageIdFromSend(payload);
-      // A success reply whose uid we cannot parse still counts as handed to
-      // Beam; delivery polling simply has nothing to key on.
-    } else {
-      errorMessage = `Beam HTTP ${response.status}`;
-    }
-  } catch (error) {
-    errorMessage = (error instanceof Error ? error.message : String(error)).slice(
-      0,
-      200,
-    );
-  }
+    const payload = (await response.json().catch(() => undefined)) as {
+      message?: unknown;
+    };
 
-  if (errorMessage) {
-    await markAttempt(snapshot, attempts, { errorMessage });
+    if (!response.ok) {
+      const detail =
+        payload && typeof payload.message === "string" && payload.message.trim()
+          ? payload.message
+          : `Beam HTTP ${response.status}`;
+      await markAttempt(snapshot, { kind: "failed", errorMessage: detail.slice(0, 200) });
+      return attempts >= MAX_SEND_ATTEMPTS ? "dead" : "retried";
+    }
+
+    const messageId = beamMessageIdFromSend(payload);
+    await markAttempt(snapshot, { kind: "sent", messageId });
+    return "sent";
+  } catch (error) {
+    const message = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+    await markAttempt(snapshot, { kind: "failed", errorMessage: message });
     return attempts >= MAX_SEND_ATTEMPTS ? "dead" : "retried";
   }
-
-  await markAttempt(snapshot, attempts, { messageId: providerMessageId });
-  return "sent";
 }
 
 export function smsSystemActor(role: Role = "admin"): SessionUser {
@@ -497,29 +496,36 @@ async function loadReminderCadence(): Promise<{
 
 function reminderFacts(
   templateKey: "rent_due_reminder" | "arrears_notice",
+  invoiceId: string,
   invoice: Invoice,
   tenant: Tenant,
-  todayInput: string,
 ): EnqueueSmsInput {
+  const due = invoice.dueDate;
+  const dueDate = due instanceof Timestamp ? due.toDate() : new Date(String(due));
+  const dueIso = Number.isNaN(dueDate.getTime())
+    ? undefined
+    : dueDate.toISOString().slice(0, 10);
+
   return {
     phoneE164: tenant.phoneE164,
     templateKey,
-    reference: invoice.id,
+    reference: invoiceId,
     tenantName: tenant.fullName.split(" ")[0],
-    dateInput: todayInput,
+    dateInput: toDateInput(new Date()),
     moneyMinor: invoice.balanceMinor,
-    dueDate: (() => {
-      const due = invoice.dueDate;
-      const date =
-        due instanceof Timestamp ? due.toDate() : new Date(String(due));
-      return Number.isNaN(date.getTime()) ? undefined : date.toISOString().slice(0, 10);
-    })(),
-    campaignId:
-      templateKey === "rent_due_reminder"
-        ? `rent_due_reminder:${invoice.id}:due_soon`
-        : undefined,
+    ...(dueIso ? { dueDate: dueIso } : {}),
+    campaignId: undefined,
     requestedBy: "system:reminders",
   };
+}
+
+const UTC_DAY_MS = 86_400_000;
+
+/** Whole calendar days between the instants, in UTC day buckets. */
+function wholeDaysBetween(from: Date, to: Date): number {
+  return (
+    Math.floor(to.getTime() / UTC_DAY_MS) - Math.floor(from.getTime() / UTC_DAY_MS)
+  );
 }
 
 /**
@@ -541,7 +547,7 @@ export async function generateReminders(
   const db = adminDb();
   const todayInput = today.toISOString().slice(0, 10);
 
-  // Only live invoices need chasing; `paid` and `void' ones are skipped.
+  // Only live invoices need chasing; `paid` and `void` ones are skipped.
   // No composite index is needed: equality filters only, sorted in memory.
   const invoices = await db
     .collection(INVOICES)
@@ -550,7 +556,11 @@ export async function generateReminders(
     .get();
 
   for (const doc of invoices.docs) {
-    const invoice = doc.data() as Invoice;
+    const invoice = {
+      ...(doc.data() as Invoice),
+      // The document id is authoritative; `id` is not stored as a field.
+      id: doc.id,
+    };
     if (invoice.balanceMinor <= 0) {
       outcome.skipped += 1;
       continue;
@@ -564,9 +574,7 @@ export async function generateReminders(
       continue;
     }
 
-    const daysToDue = Math.floor(
-      (dueDate.getTime() - today.getTime()) / 86_400_000,
-    );
+    const daysToDue = wholeDaysBetween(today, dueDate);
 
     let templateKey: "rent_due_reminder" | "arrears_notice" | undefined;
     let campaignSuffix: string | undefined;
@@ -600,10 +608,10 @@ export async function generateReminders(
       continue;
     }
 
-    const facts = reminderFacts(templateKey, invoice, tenant, todayInput);
+    const facts = reminderFacts(templateKey, doc.id, invoice, tenant);
     const queued = await enqueueReminderIfNew({
       ...facts,
-      campaignId: `${templateKey}:${invoice.id}:${campaignSuffix}`,
+      campaignId: `${templateKey}:${doc.id}:${campaignSuffix}`,
     });
 
     if (queued) {

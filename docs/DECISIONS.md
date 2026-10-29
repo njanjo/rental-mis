@@ -132,12 +132,36 @@ Anything not listed here follows the spec as written.
 - **Automation vs audit.** Webhooks commit as a synthetic `system:mpesa` admin — scoped-out by construction, and every audit entry carries that uid plus `source: callback`, so machine actions are unmistakable in the log. This is the accepted trade-off for reusing the single payment path.
 - **Timestamps.** `TransTime` arrives as 12 (`YYMMDDHHmmss`) or 14 (`YYYYMMDDHHmmss`) digits in Nairobi wall clock (UTC+3); parsing handles both, and STK request timestamps are sent as 14 digits. Amount parsing refuses separators — `45,000.00` is corrupt, not 45,000.
 
+## Phase 6 - Beam SMS (receipts + rent reminders)
+
+- **Beam API facts** (`BEAMNETWORKSBULKSMSAPI.pdf`): base `https://bulksms.beamnetworks.co.ke/api/v3`,
+  auth `Authorization: Bearer ${BEAM_SMS_API_KEY}`, send `POST /sms/send` with
+  `{recipient (bare msisdn, comma-separated for batches), sender_id (max 11),
+  type: "plain", message, schedule_time?}`. Errors are `{status: "error", message}`.
+  There is NO delivery webhook — delivery is reconciled by polling
+  `GET /sms/{uid}` (or the list `GET /sms`) and matching the Beam uid against
+  `providerMessageId` on the outbox item.
+- **SMS never blocks money.** A payment receipt row is enqueued inside the
+  payment's transaction (same commit), but the Beam call happens later in the
+  worker: a Beam outage retries with exponential backoff (5m→20m→80m→…, cap 6h)
+  and dead-letters after 5 attempts without ever rolling back the payment.
+- **Idempotent reminders.** Due-soon sends once per invoice
+  (`campaignId: rent_due_reminder:<id>:due_soon`); arrears notices repeat every
+  `overdueRepeatDays` (default 7) with the overdue count in the campaign id, so
+  re-running the cron job can never double-send. Tenants without
+  `consentSms`, inactive or former tenants and paid-up invoices are skipped.
+- **Cron route pattern** mirrors Phase 5C: `GET /api/cron/{CRON_SECRET}?job=drain|poll|reminders|all`,
+  timing-safe secret compare, each job reports its own counts; the SMS page has
+  the same three jobs as "Run now" buttons gated on `manage_sms`.
+- **Rules change:** `smsOutbox` read relaxed from admin-only to `isFinance()`
+  to match the `manage_sms` capability; writes stay server-only.
+
 ## Still open (needed by Phase 6/7)
 
 1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`; a `prod` alias was drafted locally).
 2. ~~M-Pesa products~~ — Phase 5C shipped C2B confirmation + STK Push; B2C (refunds/deposits) is still out of scope.
 3. Banks: which ones, and do they expose APIs, webhooks, or statement exports only. (Phase 5B covers statement CSV exports; a live bank API is still open.)
-4. Beam SMS: base URL, auth header, sender ID, delivery-report payload, rate limits.
+4. ~~Beam SMS: base URL, auth header, sender ID, delivery-report payload~~ — resolved by the Beam PDF (see Phase 6 decisions). Still open: production sender ID approval and whether campaign/contact-list features are needed (unlikely; we keep our own tenant list).
 5. Deposit handling and month-end close rules.
 6. Kenya Data Protection Act: retention and access policy for national IDs,
    bank details and exports.

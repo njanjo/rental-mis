@@ -45,6 +45,13 @@ const TONES: Record<string, Tone> = {
   medium: { label: "Medium", className: "bg-sky-500/10 text-sky-700 dark:text-sky-400" },
   high: { label: "High", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" },
   urgent: { label: "Urgent", className: "bg-rose-500/10 text-rose-700 dark:text-rose-400" },
+  // sms
+  queued: { label: "Queued", className: "bg-amber-500/10 text-amber-700 dark:text-amber-500" },
+  sending: { label: "Sending", className: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-400" },
+  sent: { label: "Sent", className: "bg-sky-500/10 text-sky-700 dark:text-sky-400" },
+  delivered: { label: "Delivered", className: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" },
+  failed: { label: "Failed", className: "bg-rose-500/10 text-rose-700 dark:text-rose-400" },
+  dead_letter: { label: "Dead letter", className: "bg-rose-500/10 text-rose-700 dark:text-rose-400" },
 };
 
 export function StatusBadge({

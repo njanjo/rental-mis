@@ -115,7 +115,7 @@ service cloud.firestore {
     }
 
     match /smsOutbox/{id} {
-      allow read: if isAdmin();
+      allow read: if isFinance();
       allow write: if false;
     }
 

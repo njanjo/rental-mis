@@ -253,6 +253,24 @@ describe("audit and provider events", () => {
     await assertFails(getDoc(doc(dbFor("finance-uid"), "providerEvents", "evt_1")));
   });
 
+  it("lets finance read the SMS outbox but writes stay server-only", async () => {
+    await testEnv.withSecurityRulesDisabled(async (context) => {
+      const db = context.firestore();
+      await setDoc(doc(db, "smsOutbox", "sms_1"), {
+        status: "queued",
+      });
+    });
+    await assertSucceeds(
+      getDoc(doc(dbFor("finance-uid"), "smsOutbox", "sms_1")),
+    );
+    await assertFails(
+      updateDoc(doc(dbFor("finance-uid"), "smsOutbox", "sms_1"), {
+        status: "delivered",
+      }),
+    );
+    await assertFails(getDoc(doc(dbFor("maintenance-uid"), "smsOutbox", "sms_1")));
+  });
+
   it("lets finance read STK prompts but writes stay server-only", async () => {
     await assertFails(
       setDoc(doc(dbFor("admin-uid"), "mpesaStkRequests", "stk_1"), {

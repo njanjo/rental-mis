@@ -8,7 +8,7 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phase 5C (M-Pesa callbacks + STK Push) complete
+## Status — Phase 6 (Beam SMS receipts + rent reminders) complete
 
 | Phase | Scope | State |
 | --- | --- | --- |
@@ -19,8 +19,8 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 | **5A** | **Payments: manual receipts, ledger, unmatched queue, reversals** | **done** |
 | **5B** | **Bank statement CSV import with phone matching** | **done** |
 | **5C** | **M-Pesa Daraja: C2B paybill callbacks + STK Push (route handlers)** | **done** |
-| 6 | Automation: Beam SMS outbox, reminders, scheduled jobs | next |
-| 7 | Reporting: realtime dashboard, charts, CSV | not started |
+| **6** | **Automation: Beam SMS outbox, receipts, rent reminders, cron route** | **done** |
+| 7 | Reporting: realtime dashboard, charts, CSV | next |
 | 8 | Launch: security review, backups, monitoring, training | not started |
 
 ## Stack
@@ -135,6 +135,12 @@ tests/rules/              32 allow/deny cases
   `providerEvents`. Staff can send STK prompts from Payments. Configure the
   Daraja env vars and register the URLs before go-live — see
   `.env.local.example` and `docs/DECISIONS.md`.
+- SMS automation (Phase 6): payment receipts queue into `smsOutbox` inside the
+  payment transaction; the worker sends through Beam with exponential backoff
+  and dead-letters after 5 attempts. Rent reminders (due-soon + weekly arrears
+  chase, `consentSms`-gated) generate idempotently via campaign ids. The
+  scheduler hits `GET /api/cron/<CRON_SECRET>?job=all`; the SMS page has
+  run-now buttons. Delivery is polled from Beam — no webhook exists.
 - `.env.local` holds emulator routing (`FIRESTORE_EMULATOR_HOST`,
   `FIREBASE_AUTH_EMULATOR_HOST`). Remove those two lines in production.
 - Decisions log: [`docs/DECISIONS.md`](docs/DECISIONS.md).
