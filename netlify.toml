@@ -1,0 +1,15 @@
+# Netlify build configuration.
+#
+# Secrets scanning: Firebase web-config values (API key, project id,
+# messaging sender id, app id) are public identifiers by design — they
+# exist to let the browser SDK find the project; real access control is
+# Firebase Auth + Firestore security rules. Next.js inlines the
+# NEXT_PUBLIC_* values into the client bundle at build time, so without
+# exclusions Netlify's scan would fail every build. Real secrets (Admin
+# SDK private key, BEAM_SMS_API_KEY, M-Pesa keys) are deliberately NOT
+# in this list and remain protected by the scan.
+[build]
+  command = "npm run build"
+
+[build.environment]
+  SECRETS_SCAN_OMIT_KEYS = "FIREBASE_PROJECT_ID,NEXT_PUBLIC_FIREBASE_API_KEY,NEXT_PUBLIC_FIREBASE_PROJECT_ID,NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,NEXT_PUBLIC_FIREBASE_APP_ID"
