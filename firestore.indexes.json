@@ -137,14 +137,6 @@
       ]
     },
     {
-      "collectionGroup": "leases",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "status", "order": "ASCENDING" },
-        { "fieldPath": "__name__", "order": "ASCENDING" }
-      ]
-    },
-    {
       "collectionGroup": "payments",
       "queryScope": "COLLECTION",
       "fields": [
@@ -159,11 +151,6 @@
         { "fieldPath": "paymentId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "ASCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "payments",
-      "queryScope": "COLLECTION",
-      "fields": [{ "fieldPath": "receivedAt", "order": "DESCENDING" }]
     },
     {
       "collectionGroup": "payments",
