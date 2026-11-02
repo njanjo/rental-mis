@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useEffect } from "react";
-import { RefreshCw, Send, Timer } from "lucide-react";
+import { RefreshCw, Send, Timer, Vibrate } from "lucide-react";
 import { toast } from "sonner";
 
 import { SubmitButton } from "@/components/shared/submit-button";
@@ -9,9 +9,9 @@ import { IDLE_FORM_STATE } from "@/lib/errors";
 import { runSmsJobAction } from "@/app/(dashboard)/sms/actions";
 
 /**
- * Manual triggers for the three SMS automation jobs. Each posts straight to
- * the shared `runSmsJobAction`; the count summary comes back as the form
- * message so staff see what the run did without a page change.
+ * Manual triggers for the SMS automation jobs. Each posts straight to the
+ * shared `runSmsJobAction`; the count summary comes back as the form message
+ * so staff see what the run did without a page change.
  */
 export function RunSmsJobButtons() {
   const [state, formAction] = useActionState(runSmsJobAction, IDLE_FORM_STATE);
@@ -46,6 +46,13 @@ export function RunSmsJobButtons() {
         <SubmitButton variant="outline" size="sm" pendingLabel="Queuing…">
           <Timer className="size-4" />
           Generate reminders
+        </SubmitButton>
+      </form>
+      <form action={formAction}>
+        <input type="hidden" name="job" value="test_otp" />
+        <SubmitButton variant="outline" size="sm" pendingLabel="Sending…">
+          <Vibrate className="size-4" />
+          Send test OTP
         </SubmitButton>
       </form>
     </div>

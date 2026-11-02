@@ -12,6 +12,7 @@ import {
   pollDeliveryReports,
   runOutboxWorker,
 } from "@/services/sms";
+import { sendTestOtp } from "@/app/(dashboard)/sms/actions";
 
 const db = () => adminDb();
 
@@ -353,5 +354,70 @@ describe("generateReminders", () => {
     const outcome = await generateReminders(staff);
     expect(outcome).toEqual({ dueSoon: 0, overdue: 0, skipped: 0 });
     expect(await db().collection("smsOutbox").get()).toHaveProperty("empty", true);
+  });
+});
+
+describe("sendTestOtp", () => {
+  it("queues one OTP message to the default test number and sends it", async () => {
+    enableBeam();
+    const result = await sendTestOtp(
+      { uid: "uid_admin" },
+      {
+        fetchImpl: stubFetch({
+          send: { body: { status: "success", data: "uid_test_otp" } },
+        }),
+      },
+    );
+
+    expect(result.phoneE164).toBe("+254796985336");
+    expect(result.code).toMatch(/^\d{6}$/);
+    expect(result.outcome).toEqual({ sent: 1, retried: 0, dead: 0 });
+
+    const items = await db().collection("smsOutbox").get();
+    expect(items.size).toBe(1);
+    const item = items.docs[0].data();
+    expect(item.templateKey).toBe("otp");
+    expect(item.phoneE164).toBe("+254796985336");
+    expect(item.body).toContain(result.code);
+    expect(item.body).toContain("Valid for 10 minutes");
+    expect(item.status).toBe("sent");
+    expect(item.attempts).toBe(1);
+    expect(item.providerMessageId).toBe("uid_test_otp");
+  });
+
+  it("addresses an env-configured test number when TEST_SMS_PHONE is set", async () => {
+    enableBeam();
+    process.env.TEST_SMS_PHONE = "+254700000001";
+
+    const result = await sendTestOtp(
+      { uid: "uid_admin" },
+      {
+        fetchImpl: stubFetch({
+          send: { body: { status: "success", data: "uid_test_otp_2" } },
+        }),
+      },
+    );
+
+    expect(result.phoneE164).toBe("+254700000001");
+    const items = await db().collection("smsOutbox").get();
+    expect(items.docs[0].data().phoneE164).toBe("+254700000001");
+  });
+
+  it("never stores the plaintext code in the challenge collection", async () => {
+    enableBeam();
+    const result = await sendTestOtp(
+      { uid: "uid_admin" },
+      {
+        fetchImpl: stubFetch({
+          send: { body: { status: "success", data: "uid_test_otp_3" } },
+        }),
+      },
+    );
+
+    // The outbox legitimately carries the SMS body, but otpChallenges — the
+    // only collection a verify route reads — must hold a hash, never the code.
+    const challenges = await db().collection("otpChallenges").get();
+    const serialized = JSON.stringify(challenges.docs.map((d) => d.data()));
+    expect(serialized).not.toContain(result.code);
   });
 });
