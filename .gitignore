@@ -63,3 +63,4 @@ users.json
 
 # throwaway diagnostics scripts (not part of the app)
 scripts/dump-user.ts
+scripts/dump-audit.ts

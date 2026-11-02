@@ -90,12 +90,9 @@ const __usage =
 // Environment
 // ---------------------------------------------------------------------------
 
-try {
-  process.loadEnvFile?.(".env.local");
-} catch {
-  // Optional.
-}
-
+// Parse flags first so --env-file is authoritative: when one is given it
+// replaces the default .env.local load entirely. Otherwise .env.local (the
+// emulator config) is loaded as the fallback, which is what rehearsals want.
 const flags = parseFlags(process.argv.slice(2));
 
 if (flags.envFile) {
@@ -104,6 +101,19 @@ if (flags.envFile) {
   } catch {
     fail(`Could not load env file: ${flags.envFile}`);
   }
+} else {
+  try {
+    process.loadEnvFile?.(".env.local");
+  } catch {
+    // Optional.
+  }
+}
+
+// The env file is authoritative: drop any GOOGLE_APPLICATION_CREDENTIALS the
+// shell may have set, otherwise the auth library honours the stale path and
+// the script silently reads the wrong project (or fails to authenticate).
+if (flags.envFile) {
+  delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
 }
 
 const projectId = flags.project ?? process.env.FIREBASE_PROJECT_ID;
