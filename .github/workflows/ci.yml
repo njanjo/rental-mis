@@ -91,6 +91,13 @@ jobs:
 
       - run: npm ci
 
+      # The Firestore emulator requires JDK 21+; runner defaults ship older
+      # Java on PATH, so pin a Temurin 21 explicitly.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
       # vitest.config.mts already sets fileParallelism: false and generous
       # hook timeouts, so the emulator suite is CI-safe as configured.
       - run: npm run test
