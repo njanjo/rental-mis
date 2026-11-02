@@ -5,6 +5,9 @@
   "engines": {
     "node": ">=22"
   },
+  "overrides": {
+    "jose": "^5.9.6"
+  },
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",

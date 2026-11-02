@@ -80,7 +80,7 @@ jobs:
   smoke:
     name: Production healthz smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Wait for Netlify deploy, then probe /api/healthz
         env:
@@ -92,32 +92,62 @@ jobs:
           fi
           node --input-type=module <<'EOF'
           // Netlify's own GitHub integration builds the site asynchronously.
-          // Probe strategy: short grace period, then poll healthz. The route
-          // returns 200 { ok: true } or a 500 naming the failing stage, and
-          // any transient error body fails the check explicitly.
+          // Probe strategy: grace period, poll until healthy, then require the
+          // health to persist across a settle window. A single success polls
+          // through mid-swap, because the previous (stale) deploy also served
+          // a healthy healthz — so confirm once more after the site has had
+          // time to finish swapping to the new build.
           const base = process.env.BASE_URL.replace(/\/+$/, "");
           const graceMs = 120_000;   // Netlify build head start
-          const deadline = Date.now() + 12 * 60_000;
+          const deadline = Date.now() + 8 * 60_000;
           const interval = 15_000;
+          const settleMs = 3 * 60_000;
 
           const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-          console.log(`Probing ${base}/api/healthz (grace ${graceMs / 1000}s)...`);
 
+          const check = async () => {
+            const res = await fetch(`${base}/api/healthz`, { signal: AbortSignal.timeout(20_000) });
+            const body = await res.json().catch(() => null);
+            return res.ok && body?.ok === true ? body : { failedStatus: res.status, body };
+          };
+
+          console.log(`Probing ${base}/api/healthz (grace ${graceMs / 1000}s)...`);
           await sleep(graceMs);
+
+          let first = null;
           while (Date.now() < deadline) {
             try {
-              const res = await fetch(`${base}/api/healthz`, { signal: AbortSignal.timeout(20_000) });
-              const body = await res.json().catch(() => null);
-              if (res.ok && body?.ok === true) {
-                console.log(`Healthy (${res.status}); projectId=${body.projectId ?? "unknown"} at=${body.at}`);
-                process.exit(0);
+              const result = await check();
+              if (!result.failedStatus) {
+                first = result;
+                break;
               }
-              console.log(`Not healthy yet: ${res.status} ${JSON.stringify(body)}`);
+              console.log(`Not healthy yet: ${JSON.stringify(result)}`);
             } catch (error) {
               console.log(`Probe failed: ${error?.message ?? error}`);
             }
             await sleep(interval);
           }
-          console.error(`::error::/api/healthz did not become healthy within 12 minutes at ${base}`);
-          process.exit(1);
+
+          if (!first) {
+            console.error(`::error::/api/healthz did not become healthy within 8 minutes at ${base}`);
+            process.exit(1);
+          }
+
+          console.log(`Healthy (${base}); projectId=${first.projectId ?? "unknown"} at=${first.at}`);
+          console.log(`Settling ${settleMs / 1000}s to let the new deploy finish swapping, then re-verifying...`);
+          await sleep(settleMs);
+
+          try {
+            const again = await check();
+            if (again.failedStatus) {
+              console.error(`::error::healthz was healthy but regressed after settle: ${JSON.stringify(again)}`);
+              process.exit(1);
+            }
+            console.log(`Still healthy after settle; projectId=${again.projectId ?? "unknown"} at=${again.at}`);
+            process.exit(0);
+          } catch (error) {
+            console.error(`::error::healthz re-probe failed after settle: ${error?.message ?? error}`);
+            process.exit(1);
+          }
           EOF
