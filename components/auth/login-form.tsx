@@ -1,17 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { FirebaseError } from "firebase/app";
 import { signInWithEmailAndPassword, signOut } from "firebase/auth";
 import { AlertCircle, Eye, EyeOff, Loader2, LogIn } from "lucide-react";
-import { toast } from "sonner";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getFirebaseAuth } from "@/lib/firebase/client";
+import { OtpForm } from "@/components/auth/otp-form";
 
 const DEMO_EMAIL = "admin@rentalmis.test";
 const DEMO_PASSWORD = "Password123!";
@@ -47,15 +46,17 @@ export function LoginForm({
   nextPath: string;
   showDemoHint: boolean;
 }) {
-  const router = useRouter();
   const [email, setEmail] = useState(showDemoHint ? DEMO_EMAIL : "");
   const [password, setPassword] = useState(showDemoHint ? DEMO_PASSWORD : "");
   const [showPassword, setShowPassword] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  // OTP step
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [otpPhone, setOtpPhone] = useState<string | null>(null);
+
+  async function requestOtp(emailValue: string, passwordValue: string) {
     setPending(true);
     setError(null);
 
@@ -64,12 +65,13 @@ export function LoginForm({
     try {
       const credential = await signInWithEmailAndPassword(
         auth,
-        email.trim().toLowerCase(),
-        password,
+        emailValue.trim().toLowerCase(),
+        passwordValue,
       );
 
       const idToken = await credential.user.getIdToken();
-      const response = await fetch("/api/auth/session", {
+
+      const response = await fetch("/api/auth/otp/request", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ idToken }),
@@ -80,18 +82,52 @@ export function LoginForm({
           | { error?: string }
           | null;
         await signOut(auth).catch(() => undefined);
-        throw new Error(
-          payload?.error ?? "Your account is not authorized for this system.",
-        );
+        throw new Error(payload?.error ?? "Could not send the verification code.");
       }
 
-      toast.success("Signed in");
-      router.replace(nextPath);
-      router.refresh();
+      const body = (await response.json().catch(() => null)) as
+        | { challengeId?: string; phoneE164?: string }
+        | null;
+
+      if (!body?.challengeId) {
+        throw new Error("Could not send the verification code.");
+      }
+
+      setChallengeId(body.challengeId);
+      setOtpPhone(body.phoneE164 ?? "your phone");
     } catch (cause) {
       setError(messageFor(cause));
+    } finally {
       setPending(false);
     }
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await requestOtp(email, password);
+  }
+
+  async function handleResend() {
+    if (!email || !password) return;
+    await requestOtp(email, password);
+  }
+
+  function onCancel() {
+    setChallengeId(null);
+    setOtpPhone(null);
+    setError(null);
+  }
+
+  if (challengeId && otpPhone) {
+    return (
+      <OtpForm
+        challengeId={challengeId}
+        phoneE164={otpPhone}
+        nextPath={nextPath}
+        onResend={handleResend}
+        onCancel={onCancel}
+      />
+    );
   }
 
   return (

@@ -129,9 +129,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    match /bankSyncRuns/{id} {
+match /bankSyncRuns/{id} {
       allow read: if canViewFinance();
       allow write: if false;
+    }
+
+    match /otpChallenges/{id} {
+      // OTP challenges are server-only; the client never reads or writes them.
+      allow read, write: if false;
     }
 
     match /maintenanceRequests/{id} {

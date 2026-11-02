@@ -2,6 +2,7 @@ import {
   Banknote,
   Building2,
   FileText,
+  KeyRound,
   LayoutDashboard,
   MessageSquare,
   Receipt,
@@ -22,6 +23,8 @@ export interface NavItem {
   icon: LucideIcon;
   /** At least one of these capabilities is required to see the item. */
   required: Capability[];
+  /** Visible to every active staff role regardless of capability (e.g. /account). */
+  allRoles?: boolean;
 }
 
 export interface NavSection {

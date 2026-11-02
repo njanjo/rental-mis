@@ -44,6 +44,7 @@ type Flags = {
   role: Role;
   propertyIds: string[];
   password?: string;
+  phone?: string;
   envFile?: string;
 };
 
@@ -66,6 +67,7 @@ function parseFlags(argv: string[]): Flags {
         break;
       }
       case "--password": flags.password = value; break;
+      case "--phone": flags.phone = value; break;
       case "--env-file": flags.envFile = value; break;
       default: fail(`Unknown flag: ${key}`);
     }
@@ -82,7 +84,7 @@ function fail(message: string): never {
 const __usage =
   "\nUsage:\n" +
   "  npx tsx scripts/provision-staff.ts --project <project-id> --confirm \\\n" +
-  "    --email <email> --name \"Full Name\" [--role admin] [--property id1,id2] [--password <pw>] [--env-file <file>]\n";
+  "    --email <email> --name \"Full Name\" [--role admin] [--property id1,id2] [--password <pw>] [--phone +254712345678] [--env-file <file>]\n";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -119,11 +121,17 @@ if (!flags.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flags.email)) {
   fail("A valid --email is required.");
 }
 if (!flags.name) {
-  fail("--name \"Full Name\" is required (it becomes the users doc fullName).");
-}
-if (!ROLES.includes(flags.role)) {
-  fail(`--role must be one of: ${ROLES.join(", ")}`);
-}
+    fail("--name \"Full Name\" is required (it becomes the users doc fullName).");
+  }
+  if (!flags.phone) {
+    fail("--phone +254XXXXXXXXX is required (used for OTP second factor).");
+  }
+  if (!/^\+254[17]\d{8}$/.test(flags.phone)) {
+    fail("--phone must be a Kenyan mobile number in E.164, e.g. +254712345678.");
+  }
+  if (!ROLES.includes(flags.role)) {
+    fail(`--role must be one of: ${ROLES.join(", ")}`);
+  }
 if (process.env.CI) {
   fail(
     "CI detected. Provisioning is a local runbook command; the generated " +
@@ -261,6 +269,7 @@ async function main(): Promise<void> {
       email: flags.email,
       role: flags.role,
       propertyIds: flags.propertyIds,
+      phoneE164: flags.phone,
       active: true,
       createdBy: "bootstrap:provision-staff",
       createdAt: FieldValue.serverTimestamp(),
@@ -281,6 +290,7 @@ async function main(): Promise<void> {
       fullName: flags.name,
       role: flags.role,
       propertyIds: flags.propertyIds,
+      phoneE164: flags.phone,
       active: true,
       source: existed ? "updated" : "created",
     },

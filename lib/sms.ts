@@ -25,6 +25,8 @@ export const DEFAULT_SMS_TEMPLATES: Record<
     "Hello {{name}}, rent of {{amount}} is due on {{dueDate}}. Pay via M-Pesa or bank. {{balanceNote}}",
   arrears_notice:
     "Hello {{name}}, your rent balance of {{amount}} is overdue. Kindly pay to avoid notices. Existing arrangements unaffected.",
+  otp:
+    "Rental MIS login code: {{code}}. Valid for 10 minutes. Do not share this code.",
 };
 
 /**
@@ -91,6 +93,8 @@ export function defaultSmsVariables(
       };
     case "arrears_notice":
       return { name: facts.tenantName ?? "", amount };
+    case "otp":
+      return { code: facts.reference };
     default:
       return {};
   }

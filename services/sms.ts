@@ -151,6 +151,28 @@ export function enqueueSmsWithinTransaction(
   }
 }
 
+/**
+ * Enqueue an OTP message inside the caller's transaction. Unlike
+ * `enqueueSmsWithinTransaction`, this throws on template failure so the
+ * caller can abort the whole transaction — an OTP that cannot be sent must
+ * not leave a challenge document behind.
+ */
+export function enqueueOtpWithinTransaction(
+  tx: Transaction,
+  input: { phoneE164: string; code: string; requestedBy: string },
+): void {
+  tx.set(
+    adminDb().collection(OUTBOX).doc(),
+    buildOutboxDoc({
+      phoneE164: input.phoneE164,
+      templateKey: "otp",
+      reference: input.code,
+      dateInput: toDateInput(new Date()),
+      requestedBy: input.requestedBy,
+    }),
+  );
+}
+
 /** Skip when this exact notification was already queued (campaign dedupe). */
 export async function enqueueReminderIfNew(
   input: EnqueueSmsInput,

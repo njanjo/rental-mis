@@ -18,6 +18,7 @@ export interface SessionUser {
   role: Role;
   active: boolean;
   propertyIds: string[];
+  phoneE164?: string;
 }
 
 function isEmulator(): boolean {
@@ -58,6 +59,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
       role: profile.role,
       active: profile.active,
       propertyIds: profile.propertyIds ?? [],
+      phoneE164: profile.phoneE164,
     };
   } catch (error) {
     console.warn(

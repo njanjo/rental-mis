@@ -43,6 +43,8 @@ export interface UserProfile {
   /** Properties this user is scoped to. Empty for admin (sees everything). */
   propertyIds: string[];
   active: boolean;
+  /** E.164 phone used for OTP second factor. Required to log in. */
+  phoneE164?: string;
   createdAt: FirestoreTimestamp;
   updatedAt: FirestoreTimestamp;
   lastSignInAt?: FirestoreTimestamp;
@@ -372,7 +374,8 @@ export type SmsTemplateKey =
   | "rent_due_reminder"
   | "arrears_notice"
   | "lease_expiry"
-  | "bulk_announcement";
+  | "bulk_announcement"
+  | "otp";
 
 export interface SmsOutboxItem {
   id: string;
@@ -405,6 +408,23 @@ export interface SmsLog {
   errorCode?: string;
   errorMessage?: string;
   createdAt: FirestoreTimestamp;
+}
+
+// ---------------------------------------------------------------------------
+// OTP second factor
+// ---------------------------------------------------------------------------
+
+/** One login challenge: a 6-digit code sent via Beam SMS, valid for 10 minutes. */
+export interface OtpChallenge {
+  id: string;
+  uid: string;
+  phoneE164: string;
+  codeHash: string;
+  attempts: number;
+  maxAttempts: number;
+  createdAt: FirestoreTimestamp;
+  expiresAt: FirestoreTimestamp;
+  consumedAt?: FirestoreTimestamp;
 }
 
 // ---------------------------------------------------------------------------
