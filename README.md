@@ -73,6 +73,15 @@ All use `Password123!`.
 | `npm run smoke:auth` | Verify password → ID token → session cookie (emulator) |
 | `npm run smoke:web` | End-to-end HTTP checks (needs emulators + dev server) |
 | `npm run deploy:rules` | Deploy rules + indexes to the active Firebase project |
+| `npx tsx scripts/provision-staff.ts` | Bootstrap production staff (admin-provisioned, local-only runbook) |
+
+Provisioning real staff/accounts (production runbook):
+```powershell
+npx tsx scripts/provision-staff.ts --project rental-mis-prod --confirm `
+  --email you@example.com --name "Full Name" --role admin
+# Rehearse the identical flow against local emulators with --project demo-rental-mis
+```
+Requires `--project` + `--confirm`; refuses under CI. Omitting `--password` generates one and prints it once.
 
 ## Layout
 
