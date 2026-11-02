@@ -1,0 +1,48 @@
+# Uptime monitor — probes production /api/healthz every 30 minutes.
+#
+# Part of Phase 8 monitoring (docs/PHASE-8.md):
+#   - /api/healthz boots the Admin SDK and names the failing stage on error,
+#     so a scheduled probe catches credential/runtime regressions fast.
+#   - A failed scheduled run leaves an audit trail in the Actions history and
+#     notifies via GitHub's workflow failure warnings, and can be pointed at
+#     a watched channel through notification settings.
+#
+# Required repo variable: PRODUCTION_URL (same as deploy.yml).
+name: Uptime
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uptime
+
+jobs:
+  probe:
+    name: Probe production healthz
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe /api/healthz
+        env:
+          BASE_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::GitHub Actions variable 'PRODUCTION_URL' is not set."
+            exit 1
+          fi
+          node --input-type=module <<'EOF'
+          const base = process.env.BASE_URL.replace(/\/+$/, "");
+          const res = await fetch(`${base}/api/healthz`, { signal: AbortSignal.timeout(20_000) });
+          const body = await res.json().catch(() => null);
+          console.log(`status=${res.status} ok=${body?.ok ?? "unknown"} stage=${body?.stage ?? "-"}`);
+          if (!res.ok || body?.ok !== true) {
+            console.error(`::error::Production healthz is not healthy at ${base}`);
+            process.exit(1);
+          }
+          console.log("Healthy.");
+          EOF
