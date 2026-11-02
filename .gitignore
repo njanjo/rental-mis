@@ -56,3 +56,4 @@ firebase-adminsdk*.json
 # emulator data
 emulator-data/
 .firestore-data/
+.kilo

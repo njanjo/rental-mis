@@ -24,6 +24,10 @@ export const metadata: Metadata = {
   },
   description:
     "Rental management information system for landlords and property managers in Kenya.",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+  },
   robots: { index: false, follow: false },
 };
 

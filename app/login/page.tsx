@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import { redirect } from "next/navigation";
-import { Building2, CheckCircle2 } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 
 import { LoginForm } from "@/components/auth/login-form";
 import { getSessionUser } from "@/lib/auth/session";
@@ -35,8 +36,14 @@ export default async function LoginPage({
         />
         <div className="relative flex items-center gap-3">
           <span className="flex size-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15">
-            <Building2 className="size-5" />
-          </span>
+                <Image
+                  src="/icon.svg"
+                  alt="Rental MIS"
+                  width={40}
+                  height={40}
+                  className="size-10"
+                />
+              </span>
           <div>
             <p className="text-sm font-semibold tracking-wide">Rental MIS</p>
             <p className="text-xs text-slate-400">Property operations · Kenya</p>
@@ -80,7 +87,13 @@ export default async function LoginPage({
           <div className="mb-8 lg:hidden">
             <div className="flex items-center gap-2.5">
               <span className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                <Building2 className="size-4.5" />
+                <Image
+                  src="/icon.svg"
+                  alt="Rental MIS"
+                  width={36}
+                  height={36}
+                  className="size-9"
+                />
               </span>
               <span className="text-sm font-semibold">Rental MIS</span>
             </div>

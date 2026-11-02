@@ -1,8 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Building2, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 
 import {
   Sidebar,
@@ -40,7 +41,13 @@ export function AppSidebar({ role, fullName }: AppSidebarProps) {
             <SidebarMenuButton size="lg" asChild tooltip="Rental MIS">
               <Link href="/dashboard">
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
-                  <Building2 className="size-4" />
+                  <Image
+                    src="/icon.svg"
+                    alt="Rental MIS"
+                    width={32}
+                    height={32}
+                    className="size-8"
+                  />
                 </span>
                 <span className="flex flex-col gap-0.5 leading-none">
                   <span className="truncate text-sm font-semibold">Rental MIS</span>
