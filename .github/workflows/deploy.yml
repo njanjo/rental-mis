@@ -1,0 +1,123 @@
+# CD — production pipeline for pushes to master (and manual dispatch).
+#
+# Deploy strategy: the Netlify site keeps its existing GitHub integration
+# (auto-deploy on push to master). This workflow runs alongside that deploy:
+#
+#   firestore — deploys Firestore security rules + indexes from this commit,
+#               authenticated with a service account stored in the
+#               FIREBASE_SERVICE_ACCOUNT secret. Real secrets stay out of the
+#               repo (see netlify.toml / commit 14a800a).
+#   smoke     — waits for the Netlify deploy window, then polls
+#               $PRODUCTION_URL/api/healthz, which boots the Admin SDK and
+#               reports the exact failure stage on error (commit 1482b4b).
+#
+# Repo configuration required once (Settings → Secrets and variables → Actions):
+#   Variables: FIREBASE_PROJECT_ID, PRODUCTION_URL
+#   Secrets:   FIREBASE_SERVICE_ACCOUNT (full service-account JSON with the
+#              Firebase Rules Admin + Firestore roles)
+#
+# push to master is assumed to be green CI (enforce via branch protection).
+name: Deploy
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Overlapping master pushes must not race rule deployments or smoke probes.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  firestore:
+    name: Deploy Firestore rules & indexes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Write the service-account secret to a temp file for ADC; never echoed.
+      - name: Write service account credentials
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          echo "$GOOGLE_APPLICATION_CREDENTIALS_JSON" > "$RUNNER_TEMP/firebase-adc.json"
+          chmod 600 "$RUNNER_TEMP/firebase-adc.json"
+
+      - name: Deploy rules and indexes
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-adc.json
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+        run: |
+          if [ -z "${FIREBASE_PROJECT_ID:-}" ]; then
+            echo "::error::GitHub Actions variable 'FIREBASE_PROJECT_ID' is not set."
+            exit 1
+          fi
+          if [ ! -s "$GOOGLE_APPLICATION_CREDENTIALS" ]; then
+            echo "::error::Secret 'FIREBASE_SERVICE_ACCOUNT' is not set or empty."
+            exit 1
+          fi
+          npx firebase-tools deploy \
+            --only firestore:rules,firestore:indexes \
+            --project "$FIREBASE_PROJECT_ID" \
+            --force
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f "$RUNNER_TEMP/firebase-adc.json"
+
+  smoke:
+    name: Production healthz smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for Netlify deploy, then probe /api/healthz
+        env:
+          BASE_URL: ${{ vars.PRODUCTION_URL }}
+        run: |
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::error::GitHub Actions variable 'PRODUCTION_URL' is not set (e.g. https://<site>.netlify.app)."
+            exit 1
+          fi
+          node --input-type=module <<'EOF'
+          // Netlify's own GitHub integration builds the site asynchronously.
+          // Probe strategy: short grace period, then poll healthz. The route
+          // returns 200 { ok: true } or a 500 naming the failing stage, and
+          // any transient error body fails the check explicitly.
+          const base = process.env.BASE_URL.replace(/\/+$/, "");
+          const graceMs = 120_000;   // Netlify build head start
+          const deadline = Date.now() + 12 * 60_000;
+          const interval = 15_000;
+
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+          console.log(`Probing ${base}/api/healthz (grace ${graceMs / 1000}s)...`);
+
+          await sleep(graceMs);
+          while (Date.now() < deadline) {
+            try {
+              const res = await fetch(`${base}/api/healthz`, { signal: AbortSignal.timeout(20_000) });
+              const body = await res.json().catch(() => null);
+              if (res.ok && body?.ok === true) {
+                console.log(`Healthy (${res.status}); projectId=${body.projectId ?? "unknown"} at=${body.at}`);
+                process.exit(0);
+              }
+              console.log(`Not healthy yet: ${res.status} ${JSON.stringify(body)}`);
+            } catch (error) {
+              console.log(`Probe failed: ${error?.message ?? error}`);
+            }
+            await sleep(interval);
+          }
+          console.error(`::error::/api/healthz did not become healthy within 12 minutes at ${base}`);
+          process.exit(1);
+          EOF

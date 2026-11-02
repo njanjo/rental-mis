@@ -1,0 +1,96 @@
+# CI — every pull request and every push to master.
+#
+# Two jobs:
+#   quality  — lint, typecheck, Next.js production build
+#   tests    — full Vitest suite (unit + integration + Firestore rules) inside
+#              the Firebase emulators. Ubuntu runners ship a JDK, so the
+#              Firestore emulator can boot as-is.
+#
+# Build environment: Netlify inlines NEXT_PUBLIC_* values at build time, so CI
+# must too. These are public identifiers (see netlify.toml) read from REPO
+# VARIABLES, not secrets: Settings → Secrets and variables → Actions →
+# Variables tab. Missing variables fail the build check with an explicit error.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Lint, typecheck & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Fail fast with a clear message instead of a broken build artifact
+      # when repo variables are not configured yet.
+      - name: Verify public build variables
+        env:
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }}
+        run: |
+          missing=0
+          for required in \
+            FIREBASE_PROJECT_ID \
+            NEXT_PUBLIC_FIREBASE_API_KEY \
+            NEXT_PUBLIC_FIREBASE_PROJECT_ID \
+            NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID \
+            NEXT_PUBLIC_FIREBASE_APP_ID
+          do
+            if [ -z "${!required:-}" ]; then
+              echo "::error::GitHub Actions variable '$required' is not set — add it under Settings → Secrets and variables → Actions → Variables."
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - run: npm ci
+
+      - run: npm run lint
+
+      - run: npm run typecheck
+
+      - name: Build
+        env:
+          FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_API_KEY: ${{ vars.NEXT_PUBLIC_FIREBASE_API_KEY }}
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_PROJECT_ID }}
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID }}
+          NEXT_PUBLIC_FIREBASE_APP_ID: ${{ vars.NEXT_PUBLIC_FIREBASE_APP_ID }}
+        run: npm run build
+
+  tests:
+    name: Vitest + Firebase emulators
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # vitest.config.mts already sets fileParallelism: false and generous
+      # hook timeouts, so the emulator suite is CI-safe as configured.
+      - run: npm run test
