@@ -17,8 +17,14 @@ import { z } from "zod";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import {
   SESSION_COOKIE,
+  SESSION_FINGERPRINT_COOKIE,
   SESSION_MAX_AGE_SECONDS,
 } from "@/lib/auth/constants";
+import {
+  fingerprintClient,
+  fingerprintFromRequest,
+  fingerprintsMatch,
+} from "@/lib/auth/client-fingerprint";
 import { writeAuditLog } from "@/lib/audit";
 import { isValidOtpFormat, verifyOtp } from "@/lib/otp";
 import type { UserProfile } from "@/lib/types";
@@ -60,6 +66,9 @@ export async function POST(request: Request) {
     .doc(parsed.data.challengeId);
 
   const now = new Date();
+  // Computed once: it gates the binding check below and is stored on the
+  // companion cookie so the session can be re-checked on every request.
+  const requestFingerprint = fingerprintClient(fingerprintFromRequest(request));
 
   // 1. Read the challenge outside a transaction so we can fail fast.
   const challengeSnap = await challengeRef.get();
@@ -78,12 +87,58 @@ export async function POST(request: Request) {
     maxAttempts: number;
     expiresAt: { toDate: () => Date };
     consumedAt?: { toDate: () => Date };
+    clientFingerprint?: string;
   };
 
   if (challenge.consumedAt) {
     return NextResponse.json(
       { error: "That code has already been used." },
       { status: 409 },
+    );
+  }
+
+  // 1b. The challenge is bound to the machine that requested it, so a stolen
+  // challenge id cannot be verified from a different machine. When the secret
+  // is unset (local dev) every fingerprint is empty and the check is a no-op.
+  const storedFingerprint = challenge.clientFingerprint ?? "";
+  if (
+    storedFingerprint &&
+    requestFingerprint &&
+    !fingerprintsMatch(requestFingerprint, storedFingerprint)
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "That code was requested from a different device. Request a new one.",
+      },
+      { status: 403 },
+    );
+  }
+
+  // 2. Load the profile now, before the code check, so a failed attempt can be
+  // audited with a real role and so an account deactivated after the challenge
+  // was issued is rejected before any code is accepted.
+  const userRef = adminDb().collection("users").doc(challenge.uid);
+  const userSnap = await userRef.get();
+  if (!userSnap.exists) {
+    return NextResponse.json({ error: "Account not found." }, { status: 404 });
+  }
+
+  const profile = userSnap.data() as UserProfile;
+  if (!profile.active) {
+    return NextResponse.json(
+      { error: "This account has been deactivated." },
+      { status: 403 },
+    );
+  }
+
+  // 2b. The challenge's phone must still match the profile's phone. A phone
+  // swap mid-challenge would let a code intended for one number be accepted
+  // against another; the challenge is bound to the number it was sent to.
+  if (challenge.phoneE164 && profile.phoneE164 && challenge.phoneE164 !== profile.phoneE164) {
+    return NextResponse.json(
+      { error: "That code is no longer valid. Request a new one." },
+      { status: 410 },
     );
   }
 
@@ -104,28 +159,29 @@ export async function POST(request: Request) {
   }
 
   if (!verifyOtp(code, challenge.codeHash)) {
-    await challengeRef.update({
-      attempts: (challenge.attempts ?? 0) + 1,
-      updatedAt: new Date(),
+    const nextAttempts = (challenge.attempts ?? 0) + 1;
+    // Failed attempts are auditable: a burst of wrong codes is the signal of a
+    // brute-force attempt, and we want that visible in the audit log. The
+    // increment and the audit row are committed together so they can never drift.
+    await adminDb().runTransaction(async (tx) => {
+      tx.update(challengeRef, {
+        attempts: nextAttempts,
+        updatedAt: new Date(),
+      });
+      writeAuditLog(tx, {
+        actorUid: challenge.uid,
+        actorRole: profile.role,
+        action: "auth.otp_verify_failed",
+        entityType: "otpChallenge",
+        entityId: parsed.data.challengeId,
+        before: { attempts: challenge.attempts },
+        after: { attempts: nextAttempts },
+        reason: "Incorrect code.",
+      });
     });
     return NextResponse.json(
       { error: "Incorrect code. Try again." },
       { status: 401 },
-    );
-  }
-
-  // 2. Code is correct — read the user profile.
-  const userRef = adminDb().collection("users").doc(challenge.uid);
-  const userSnap = await userRef.get();
-  if (!userSnap.exists) {
-    return NextResponse.json({ error: "Account not found." }, { status: 404 });
-  }
-
-  const profile = userSnap.data() as UserProfile;
-  if (!profile.active) {
-    return NextResponse.json(
-      { error: "This account has been deactivated." },
-      { status: 403 },
     );
   }
 
@@ -177,6 +233,20 @@ export async function POST(request: Request) {
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
   });
+
+  // Companion cookie: the fingerprint the session was minted on. The session
+  // reader rejects the cookie on any machine whose fingerprint does not match.
+  if (requestFingerprint) {
+    response.cookies.set({
+      name: SESSION_FINGERPRINT_COOKIE,
+      value: requestFingerprint,
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      path: "/",
+      maxAge: SESSION_MAX_AGE_SECONDS,
+    });
+  }
 
   return response;
 }

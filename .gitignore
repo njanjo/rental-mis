@@ -57,3 +57,9 @@ firebase-adminsdk*.json
 emulator-data/
 .firestore-data/
 .kilo
+
+# local auth exports — contain password hashes, never commit
+users.json
+
+# throwaway diagnostics scripts (not part of the app)
+scripts/dump-user.ts

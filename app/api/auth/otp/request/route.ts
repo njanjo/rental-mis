@@ -13,6 +13,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import { fingerprintClient, fingerprintFromRequest } from "@/lib/auth/client-fingerprint";
 import { enqueueOtpWithinTransaction } from "@/services/sms";
 import {
   generateOtp,
@@ -125,10 +126,13 @@ export async function POST(request: Request) {
     );
   }
 
-  // 4. Generate the OTP and store the challenge.
+  // 4. Generate the OTP and store the challenge. The challenge is bound to the
+  // machine that requested it, so a stolen challenge id cannot be verified
+  // from a different machine.
   const code = generateOtp();
   const codeHash = hashOtp(code);
   const expiresAt = otpExpiresAt(now);
+  const clientFingerprint = fingerprintClient(fingerprintFromRequest(request));
 
   const challengeRef = adminDb().collection("otpChallenges").doc();
 
@@ -142,6 +146,7 @@ export async function POST(request: Request) {
         maxAttempts: OTP_MAX_ATTEMPTS,
         createdAt: new Date(),
         expiresAt,
+        ...(clientFingerprint ? { clientFingerprint } : {}),
       });
 
       enqueueOtpWithinTransaction(tx, {

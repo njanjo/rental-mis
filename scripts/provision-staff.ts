@@ -23,7 +23,7 @@
  * Credentials reuse the app chain: FIREBASE_SERVICE_ACCOUNT (whole JSON file)
  * -> FIREBASE_CLIENT_EMAIL/FIREBASE_PRIVATE_KEY -> ADC (emulator runs).
  */
-import { initializeApp, cert, type AppOptions } from "firebase-admin/app";
+import { getApp, getApps, initializeApp, cert, type AppOptions } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore, FieldValue, type Firestore } from "firebase-admin/firestore";
 
@@ -198,7 +198,10 @@ function buildAppOptions(): AppOptions {
   return { projectId };
 }
 
-const app = initializeApp(buildAppOptions());
+// Guard against a default app already created by ADC; mirrors
+// lib/firebase/admin.ts so the script works whether credentials come from the
+// service-account file, the split env vars, or ADC.
+const app = getApps().length > 0 ? getApp() : initializeApp(buildAppOptions());
 const auth = getAuth(app);
 const db: Firestore = getFirestore(app);
 
