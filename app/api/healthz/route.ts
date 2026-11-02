@@ -14,9 +14,8 @@ export async function GET() {
   };
 
   try {
-    const admin = await import("firebase-admin/app");
+    await import("firebase-admin/app");
     report.adminImport = "ok";
-    admin.getApp;
   } catch (error) {
     return NextResponse.json(
       {
@@ -31,7 +30,7 @@ export async function GET() {
   }
 
   try {
-    const admin = await import("firebase-admin/firestore");
+    await import("firebase-admin/firestore");
     report.firestoreImport = "ok";
   } catch (error) {
     return NextResponse.json(
@@ -47,10 +46,10 @@ export async function GET() {
   }
 
   try {
-    const { adminDb } = await import("@/lib/firebase/admin");
-    const db = adminDb();
+    const { adminDb, adminApp } = await import("@/lib/firebase/admin");
+    adminDb();
     report.adminInit = "ok";
-    report.projectId = await db.projectId;
+    report.projectId = adminApp().options.projectId ?? null;
   } catch (error) {
     return NextResponse.json(
       {
