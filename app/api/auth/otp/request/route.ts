@@ -176,6 +176,9 @@ export async function POST(request: Request) {
       "[auth/otp/request] inline Beam drain failed; the outbox row will be retried by the cron worker",
       cause,
     );
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[DEV OTP] Code for ${phoneE164}: ${code} (challengeId: ${challengeRef.id})`);
+    }
   }
 
   return NextResponse.json({ ok: true, challengeId: challengeRef.id, phoneE164: maskPhone(phoneE164) });
