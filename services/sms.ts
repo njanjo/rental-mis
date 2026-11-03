@@ -344,6 +344,12 @@ export async function runOutboxWorker(
     if (process.env.NODE_ENV === "production") {
       throw cause;
     }
+    if (process.env.NODE_ENV === "test") {
+      throw cause;
+    }
+    if (process.env.NODE_ENV === "test") {
+      throw cause;
+    }
     // Dev mode without Beam config: mark queued messages as sent so OTPs flow.
     const snapshot = await db
       .collection(OUTBOX)
