@@ -8,7 +8,7 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phase 7 (Reporting: realtime dashboard, charts, CSV) complete
+## Status — Phases 2–7 built · Phase 8 (launch readiness) in progress
 
 | Phase | Scope | State |
 | --- | --- | --- |
@@ -21,7 +21,8 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 | **5C** | **M-Pesa Daraja: C2B paybill callbacks + STK Push (route handlers)** | **done** |
 | **6** | **Automation: Beam SMS outbox, receipts, rent reminders, cron route** | **done** |
 | **7** | **Reporting: realtime dashboard, charts, CSV exports** | **done** |
-| 8 | Launch: security review, backups, monitoring, training | not started |
+| **8** | **Launch: security review, backups, monitoring, training** | **in progress** — audit + headers + uptime done, backups/console items in `docs/PHASE-8.md` |
+| — | CI/CD: GitHub Actions (CI, Deploy, Uptime workflows) | **live** |
 
 ## Stack
 
@@ -31,8 +32,11 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 - Session cookies (`__session`, 5 days, httpOnly) verified server-side
 - Vitest + `@firebase/rules-unit-testing` against the emulator suite
 
-Planned: Cloud Functions 2nd gen, M-Pesa Daraja, bank adapters, **Beam SMS**
-(replaces Africa's Talking in the original spec), Vercel hosting.
+Hosting: Netlify (auto-deploys from `master`, verified by the Deploy
+workflow's post-deploy healthz smoke). CI/CD: GitHub Actions — `ci.yml`
+(lint · typecheck · build · full emulator suite), `deploy.yml` (Firestore
+rules deploy + production smoke), `uptime.yml` (30-minute healthz probe).
+Adopted choices: **Beam SMS** replaced Africa's Talking; M-Pesa Daraja done.
 
 ## Getting started
 

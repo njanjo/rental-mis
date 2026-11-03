@@ -45,14 +45,6 @@ service cloud.firestore {
       return isAdmin() || isAuditor();
     }
 
-    // Property-level scope. Admin sees everything; other roles are limited to
-    // the propertyIds assigned on their profile.
-    function inPropertyScope(propertyId) {
-      return activeUser() && (
-        isAdmin() || propertyId in profile().propertyIds
-      );
-    }
-
     match /users/{uid} {
       allow read: if activeUser() && (request.auth.uid == uid || isAdmin());
       allow write: if false; // provision roles via trusted backend only
@@ -129,7 +121,7 @@ service cloud.firestore {
       allow write: if false;
     }
 
-match /bankSyncRuns/{id} {
+    match /bankSyncRuns/{id} {
       allow read: if canViewFinance();
       allow write: if false;
     }

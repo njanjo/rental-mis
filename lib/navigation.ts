@@ -81,6 +81,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     label: "Administration",
     items: [
+      { href: "/account", label: "Account", icon: KeyRound, required: [], allRoles: true },
       { href: "/settings", label: "Settings", icon: Settings, required: ["manage_settings"] },
     ],
   },

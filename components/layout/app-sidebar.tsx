@@ -63,7 +63,9 @@ export function AppSidebar({ role, fullName }: AppSidebarProps) {
 
       <SidebarContent>
         {NAV_SECTIONS.map((section) => {
-          const items = section.items.filter((item) => canAny(role, item.required));
+          const items = section.items.filter(
+            (item) => item.allRoles || canAny(role, item.required),
+          );
           if (items.length === 0) return null;
 
           return (

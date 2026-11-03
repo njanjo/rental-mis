@@ -196,9 +196,45 @@ Anything not listed here follows the spec as written.
   portfolios (hundreds of units) this cannot bite, and unbounded reads of all
   money data were never on the table.
 
+## Phase 8 — launch readiness
+
+- **Password rotation is self-service.** Staff change their own password on
+  `/account` (any active role): the current password re-authenticates against
+  Firebase (`reauthenticateWithCredential`) and satisfies the recent-login
+  requirement, then `updatePassword` applies it — all client-side, so the
+  server never handles plaintext credentials and no rules change is needed.
+  A stale session bounces to `/login?next=/account` instead of failing.
+- **Reset is anti-enumeration.** The sign-in page sends
+  `sendPasswordResetEmail` directly from the client and always shows the same
+  generic confirmation regardless of whether the email exists. Malformed
+  emails and throttling are the only surfaced errors.
+- **Account page is capability-free by design.** `/account` shows the
+  caller's own profile (name/email/role/scope, read-only) + password form.
+  Roles and property scope stay admin-provisioned; nothing here lets a user
+  edit their own access.
+- **Security headers at the edge of the app.** `next.config.ts headers()`
+  emits XFO DENY, nosniff, referrer policy, permissions lockout, HSTS and a
+  minimal CSP (`frame-ancestors 'none'; object-src 'none'; base-uri
+  'self'`). A nonce-based script CSP stays open as later hardening.
+- **CI/CD runs on GitHub Actions** (Decision 16): `ci.yml` (lint, typecheck,
+  build, full emulator suite on JDK 21), `deploy.yml` (Firestore rules +
+  indexes via service-account ADC, then Netlify healthz smoke with a
+  post-swap settle re-probe), `uptime.yml` (30-minute healthz probe).
+- **Production credentials use the whole-file form.** `FIREBASE_SERVICE_ACCOUNT`
+  (entire service-account JSON pasted verbatim into one env var) is the
+  preferred format everywhere — JSON already escapes the private key's
+  newlines, so it survives any hosting UI without shell escaping. The
+  three-variable form remains supported for local dev/emulator use.
+- **`jose` is pinned to ^5.9.6** via npm overrides: v6 is ESM-only and breaks
+  `firebase-admin` (through `jwks-rsa`) on CommonJS runtimes such as the
+  Netlify Node sandbox.
+
 ## Still open (needed by Phase 7/8)
 
-1. Real Firebase project ids for dev / staging / production (`.firebaserc` uses `demo-rental-mis`; a `prod` alias was drafted locally).
+1. ~~Real Firebase project ids for dev / staging / production~~ — production is
+   `rental-mis-prod` (`FIREBASE_PROJECT_ID` as a GitHub/Netlify variable, kept
+   out of the repo); `.firebaserc` keeps its placeholder default. Firestore
+   emulators still run against `demo-*` ids.
 2. ~~M-Pesa products~~ — Phase 5C shipped C2B confirmation + STK Push; B2C (refunds/deposits) is still out of scope.
 3. Banks: which ones, and do they expose APIs, webhooks, or statement exports only. (Phase 5B covers statement CSV exports; a live bank API is still open.)
 4. ~~Beam SMS: base URL, auth header, sender ID, delivery-report payload~~ — resolved by the Beam PDF (see Phase 6 decisions). Still open: production sender ID approval and whether campaign/contact-list features are needed (unlikely; we keep our own tenant list).

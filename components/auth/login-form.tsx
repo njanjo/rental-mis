@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { FirebaseError } from "firebase/app";
-import { signInWithEmailAndPassword, signOut } from "firebase/auth";
+import {
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
 import { AlertCircle, Eye, EyeOff, Loader2, LogIn } from "lucide-react";
 
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -51,6 +55,9 @@ export function LoginForm({
   const [showPassword, setShowPassword] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resetPending, setResetPending] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
 
   // OTP step
   const [challengeId, setChallengeId] = useState<string | null>(null);
@@ -130,6 +137,37 @@ export function LoginForm({
     );
   }
 
+  /**
+   * Self-service reset for provisioned accounts. Anti-enumeration: the reply
+   * is identical whether or not the email exists (Firebase only rejects
+   * malformed emails), so the generic confirmation is always shown.
+   */
+  async function handleReset(event: React.MouseEvent) {
+    event.preventDefault();
+    setResetError(null);
+    setResetSent(false);
+
+    const auth = getFirebaseAuth();
+    setResetPending(true);
+    try {
+      await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+      setResetSent(true);
+    } catch (cause) {
+      if (
+        cause instanceof FirebaseError &&
+        (cause.code === "auth/invalid-email" ||
+          cause.code === "auth/missing-email")
+      ) {
+        setResetError("Enter a valid email address above first.");
+      } else if (cause instanceof FirebaseError && cause.code === "auth/too-many-requests") {
+        setResetError("Too many attempts. Wait a few minutes and try again.");
+      } else {
+        setResetSent(true); // do not reveal whether the account exists
+      }
+    }
+    setResetPending(false);
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-5" noValidate>
       {error ? (
@@ -157,7 +195,17 @@ export function LoginForm({
       </div>
 
       <div className="space-y-2">
-        <Label htmlFor="password">Password</Label>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="password">Password</Label>
+          <button
+            type="button"
+            className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+            onClick={handleReset}
+            disabled={resetPending || pending}
+          >
+            {resetPending ? "Sending…" : "Forgot password?"}
+          </button>
+        </div>
         <div className="relative">
           <Input
             id="password"
@@ -205,6 +253,23 @@ export function LoginForm({
           <p className="font-mono text-[11px]">{DEMO_PASSWORD}</p>
           <p className="mt-1.5">Run <span className="font-mono">npm run emulators</span> and <span className="font-mono">npm run seed</span> first.</p>
         </div>
+      ) : null}
+
+      {resetError ? (
+        <Alert variant="destructive">
+          <AlertCircle className="size-4" />
+          <AlertDescription>{resetError}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {resetSent ? (
+        <Alert>
+          <AlertDescription>
+            If this email belongs to a provisioned account, a password reset
+            link has been sent to your inbox. Check the spam folder if it does
+            not arrive within a few minutes.
+          </AlertDescription>
+        </Alert>
       ) : null}
     </form>
   );
