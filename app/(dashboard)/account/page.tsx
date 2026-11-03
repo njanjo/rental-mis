@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { KeyRound } from "lucide-react";
 
-import { ChangePasswordForm } from "@/components/auth/change-password-form";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { requireUser } from "@/lib/auth/session";
@@ -60,13 +59,11 @@ export default async function AccountPage() {
             Password
           </CardTitle>
           <CardDescription>
-            Rotating your password signs in at a fresh strength without ending your
-            current session. Admins on the live site can also send a reset link from
-            the sign-in page.
+            Change your password using Firebase Authentication.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <ChangePasswordForm />
+          <p className="text-sm text-muted-foreground">Password management is handled by Firebase.</p>
         </CardContent>
       </Card>
     </div>
