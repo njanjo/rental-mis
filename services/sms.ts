@@ -373,6 +373,42 @@ export async function runOutboxWorker(
     );
     return outcome;
   }
+
+  if (!config) {
+    throw new Error("SMS configuration missing");
+  }
+
+  const snapshot = await db
+    .collection(OUTBOX)
+    .where("status", "in", ["queued", "failed"])
+    .where("nextAttemptAt", "<=", Timestamp.now())
+    .orderBy("nextAttemptAt")
+    .limit(SEND_BATCH)
+    .get();
+
+  const outcome: SendOutcome = { sent: 0, retried: 0, dead: 0 };
+
+  await Promise.all(
+    snapshot.docs.map(async (docSnap) => {
+      const result = await sendOne(docSnap, config!, fetchImpl);
+      outcome[result] += 1;
+    }),
+  );
+
+  if (snapshot.size > 0) {
+    await db.runTransaction(async (tx) => {
+      writeAuditLog(tx, {
+        actorUid: "system:sms",
+        actorRole: "admin",
+        action: "sms.worker_ran",
+        entityType: "smsOutbox",
+        entityId: "batch",
+        after: { ...outcome, scanned: snapshot.size },
+      });
+    });
+  }
+
+  return outcome;
 }
 
 // ---------------------------------------------------------------------------
