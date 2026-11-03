@@ -6,7 +6,6 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -19,9 +18,6 @@ import {
 
 import { getFirebaseAuth } from "@/lib/firebase/client";
 
-const SESSION_REFRESH_KEY = "rental-mis:session-refreshed-at";
-const REFRESH_INTERVAL_MS = 30 * 60 * 1000;
-
 interface AuthContextValue {
   user: User | null;
   initializing: boolean;
@@ -30,48 +26,21 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-async function pushSessionCookie(idToken: string): Promise<Response> {
-  return fetch("/api/auth/session", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idToken }),
-  });
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [initializing, setInitializing] = useState(true);
   const router = useRouter();
-  const refreshing = useRef(false);
 
   useEffect(() => {
     const auth = getFirebaseAuth();
 
-    const unsubscribe = onIdTokenChanged(auth, async (nextUser) => {
+    // Listen only: the `__session` cookie is minted once by POST
+    // /api/auth/otp/verify (after the SMS code is accepted) and lives its
+    // 5-day window. Pushing sessions from raw ID tokens here used to bypass
+    // the OTP second factor — see app/api/auth/session/route.ts.
+    const unsubscribe = onIdTokenChanged(auth, (nextUser) => {
       setUser(nextUser);
       setInitializing(false);
-
-      if (!nextUser) {
-        window.localStorage.removeItem(SESSION_REFRESH_KEY);
-        return;
-      }
-
-      // Keep the 5-day session cookie alive for staff who stay signed in.
-      const last = Number(window.localStorage.getItem(SESSION_REFRESH_KEY) ?? 0);
-      if (Date.now() - last < REFRESH_INTERVAL_MS || refreshing.current) return;
-
-      refreshing.current = true;
-      try {
-        const idToken = await nextUser.getIdToken();
-        const response = await pushSessionCookie(idToken);
-        if (response.ok) {
-          window.localStorage.setItem(SESSION_REFRESH_KEY, String(Date.now()));
-        }
-      } catch {
-        // Non-fatal: the existing cookie remains valid until it expires.
-      } finally {
-        refreshing.current = false;
-      }
     });
 
     return () => unsubscribe();
@@ -82,7 +51,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await firebaseSignOut(getFirebaseAuth());
     } finally {
       await fetch("/api/auth/session", { method: "DELETE" }).catch(() => undefined);
-      window.localStorage.removeItem(SESSION_REFRESH_KEY);
       router.replace("/login");
       router.refresh();
     }

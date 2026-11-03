@@ -22,6 +22,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 import { SESSION_FINGERPRINT_SECRET } from "@/lib/auth/constants";
+import { buildFingerprintMaterial } from "@/lib/auth/fingerprint-material";
 
 const HASH_ALGORITHM = "sha256";
 
@@ -57,12 +58,14 @@ export function fingerprintClient(input: {
       .pop() ??
     remoteAddress;
 
-  const material = `${clientIp}\u0000${userAgent}`;
-  return createHash(HASH_ALGORITHM)
-    .update(secret, "utf8")
-    .update("\u0000")
-    .update(material, "utf8")
-    .digest("hex");
+  // The composition is shared with the Edge middleware via the canonical
+  // builder (secret-first, like this hash chain previously produced).
+  const material = buildFingerprintMaterial({
+    clientIp,
+    userAgent,
+    secret,
+  });
+  return createHash(HASH_ALGORITHM).update(material, "utf8").digest("hex");
 }
 
 /** Extract the fingerprint inputs from a Next Request, honouring proxies. */

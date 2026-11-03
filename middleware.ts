@@ -4,6 +4,7 @@ import {
   SESSION_COOKIE,
   SESSION_FINGERPRINT_COOKIE,
 } from "@/lib/auth/constants";
+import { buildFingerprintMaterial } from "@/lib/auth/fingerprint-material";
 
 /**
  * Cookie-presence gate plus the session-binding check. The Edge runtime
@@ -17,7 +18,18 @@ import {
  * treated as a replayed cookie and bounced to /login. That is what makes a
  * stolen session cookie useless on a different machine.
  */
-const PUBLIC_PATHS = ["/login", "/api/auth/session", "/api/healthz"];
+/**
+ * PUBLIC_PATHS allows unauthenticated traffic. /api/auth/otp/* belongs here:
+ * it is hit from the login page *before* any session exists. /api/auth/session
+ * stays public so DELETE (sign-out) always reaches its cookie-clearing
+ * handler; it no longer accepts POST sessions (see the route for why).
+ */
+const PUBLIC_PATHS = [
+  "/login",
+  "/api/auth/session",
+  "/api/auth/otp",
+  "/api/healthz",
+];
 
 async function fingerprintEdge(request: NextRequest): Promise<string> {
   const secret = process.env.SESSION_FINGERPRINT_SECRET?.trim() ?? "";
@@ -25,7 +37,7 @@ async function fingerprintEdge(request: NextRequest): Promise<string> {
 
   const forwardedFor = request.headers.get("x-forwarded-for") ?? "";
   const remoteAddress = request.headers.get("x-real-ip") ?? "";
-  const userAgent = request.headers.get("user-agent") ?? "";
+  const userAgent = (request.headers.get("user-agent") ?? "").trim();
 
   const clientIp =
     forwardedFor
@@ -33,12 +45,12 @@ async function fingerprintEdge(request: NextRequest): Promise<string> {
       .map((part) => part.trim())
       .filter(Boolean)
       .pop() ??
-    remoteAddress;
+    remoteAddress.trim();
 
-  const material = new TextEncoder().encode(
-    `${clientIp}\u0000${userAgent}\u0000${secret}`,
-  );
-  const digest = await crypto.subtle.digest("SHA-256", material);
+  // Same canonical composition as the Node issuer — see fingerprint-material.ts.
+  // A drift here would reject every session the verify route minted.
+  const material = buildFingerprintMaterial({ clientIp, userAgent, secret });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(material));
   return Array.from(new Uint8Array(digest))
     .map((byte) => byte.toString(16).padStart(2, "0"))
     .join("");

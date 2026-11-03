@@ -29,7 +29,9 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 - Next.js 15.5 (App Router, Turbopack) + TypeScript + Tailwind v4
 - shadcn/ui (radix) + lucide icons
 - Firebase Auth (email/password, staff only), Cloud Firestore, Admin SDK
-- Session cookies (`__session`, 5 days, httpOnly) verified server-side
+- Two-factor login — 6-digit OTP by Beam SMS, challenge bound to the machine,
+  fingerprint-checked sessions (`__session` + `__session_fp`, 5 days, httpOnly)
+- Session cookies verified server-side; minted ONLY by `POST /api/auth/otp/verify`
 - Vitest + `@firebase/rules-unit-testing` against the emulator suite
 
 Hosting: Netlify (auto-deploys from `master`, verified by the Deploy
@@ -92,7 +94,8 @@ Requires `--project` + `--confirm`; refuses under CI. Omitting `--password` gene
 ```
 app/
   (dashboard)/            protected shell + one route per module
-  api/auth/session/       POST mints __session, DELETE clears it
+  api/auth/session/       DELETE clears the session (sign-out)
+  api/auth/otp/           POST request (sends Beam OTP), verify (mints __session)
   login/                  staff sign-in (no registration)
 components/
   layout/                 sidebar, topbar, user menu

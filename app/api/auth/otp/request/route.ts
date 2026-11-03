@@ -14,7 +14,7 @@ import { z } from "zod";
 
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
 import { fingerprintClient, fingerprintFromRequest } from "@/lib/auth/client-fingerprint";
-import { enqueueOtpWithinTransaction } from "@/services/sms";
+import { enqueueOtpWithinTransaction, runOutboxWorker } from "@/services/sms";
 import {
   generateOtp,
   hashOtp,
@@ -160,6 +160,21 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "Could not send the verification code. Try again." },
       { status: 500 },
+    );
+  }
+
+  // The outbox row exists now, but someone still has to call Beam. Previously
+  // delivery waited for the cron worker, so a login could sit at the verify
+  // screen for minutes — or never receive a code at all until a scheduler ran.
+  // Drain inline, best-effort: success sends the code within seconds; failure
+  // is non-blocking because the committed outbox row is retried by the cron
+  // job with exponential backoff exactly like every other queued SMS.
+  try {
+    await runOutboxWorker();
+  } catch (cause) {
+    console.warn(
+      "[auth/otp/request] inline Beam drain failed; the outbox row will be retried by the cron worker",
+      cause,
     );
   }
 

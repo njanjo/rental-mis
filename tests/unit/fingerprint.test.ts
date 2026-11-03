@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 
+import { createHash } from "node:crypto";
+
 import {
   fingerprintClient,
   fingerprintsMatch,
 } from "@/lib/auth/client-fingerprint";
+import { buildFingerprintMaterial } from "@/lib/auth/fingerprint-material";
 
 const SECRET = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -63,6 +66,38 @@ describe("fingerprintClient", () => {
     const b = fp({});
     expect(a).toBe(b);
     expect(a).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("parities with the Edge middleware composition (WebCrypto)", async () => {
+    // The Edge middleware recomputes the fingerprint with WebCrypto on every
+    // request. If its composition ever drifts from the Node issuer's, every
+    // freshly minted session is rejected and sign-in loops forever. This test
+    // reproduces the middleware's computation and pins both to the canonical
+    // material builder — the exact regression this guards against.
+    const secret = SECRET;
+    const userAgent = "Mozilla/5.0";
+    const clientIp = "9.9.9.9";
+
+    const nodeDigest = fp({ forwardedFor: clientIp, userAgent });
+
+    // Same steps the middleware performs next/server-side on Edge runtime.
+    const edgeMaterial = buildFingerprintMaterial({ clientIp, userAgent, secret });
+    const subtleDigest = await globalThis.crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(edgeMaterial),
+    );
+    const edgeDigest = Array.from(new Uint8Array(subtleDigest))
+      .map((byte) => byte.toString(16).padStart(2, "0"))
+      .join("");
+
+    expect(edgeDigest).toBe(nodeDigest);
+
+    // And the canonical builder agrees with a plain, self-evident sha256 of
+    // secret\0ip\0ua so a second independent path can't drift either.
+    const plain = createHash("sha256")
+      .update(`${secret}\u0000${clientIp}\u0000${userAgent}`, "utf8")
+      .digest("hex");
+    expect(plain).toBe(nodeDigest);
   });
 });
 

@@ -10,8 +10,8 @@ Audited surfaces and verdicts:
 | Surface | Finding |
 | --- | --- |
 | `firestore.rules` | ✅ Deny-all default; every collection enumerated; all writes trusted-backend-only; finance/audit reads scoped; `users` writes denied (role provisioning only via Admin SDK). Test suite covers rules. |
-| `middleware.ts` | ✅ Cookie-presence UX gate only, as documented — real verification is Admin SDK `verifySessionCookie` in `app/(dashboard)/layout.tsx` (confirmed). |
-| `POST /api/auth/session` | ✅ Zod-validated ID token, verified with Admin SDK; rejects unprovisioned/deactivated accounts; httpOnly/secure/sameSite=lax cookie. |
+| `middleware.ts` | ✅ Cookie-presence UX gate only, as documented — real verification is Admin SDK `verifySessionCookie` in `app/(dashboard)/layout.tsx` (confirmed). Also bounces `__session` requests whose `__session_fp` companion cookie is missing or stale (stolen-cookie replay guard). |
+| 2FA login (`/api/auth/otp/{request,verify}`) | ✅ Password → Admin SDK-verified ID token → 6-digit OTP via Beam to the profile phone. Challenge hashed, 10-min expiry, 5 attempts, 60s request cooldown, machine fingerprint bound, phone-swap rejected, every failure audited. Only the verify route mints `__session`; the old token→cookie route was removed so the second factor cannot be bypassed. |
 | M-Pesa webhooks (validation/stk/confirmation) | ✅ Secret-in-path + timing-safe comparison (`callbackSecretMatches`); non-matching → 401; unconfigured → 503. |
 | Cron route (`/api/cron/{secret}`) | ✅ Same shared-secret-in-path pattern. |
 | Secrets | ✅ Real secrets only via env; public identifiers whitelisted for build (netlify.toml). FIREBASE_SERVICE_ACCOUNT JSON form supported app-wide. |
@@ -19,9 +19,10 @@ Audited surfaces and verdicts:
 
 Accepted residuals (documented, revisit post-launch):
 
-- **No rate limiting** on `/api/auth/session`. A forged sign-in must first
-  mint a valid Firebase ID token — infeasible to brute force; Firebase
-  throttles upstream. Recommend adding a lightweight limiter if abuse appears.
+- ~~**No rate limiting** on the OTP request route~~ — closed by Phase 8's OTP
+  hardening: 60s request cooldown, 5-attempt challenge cap, and audit rows for
+  every failed verify. A forged sign-in must still mint a valid Firebase ID
+  token — infeasible to brute force; Firebase throttles upstream.
 - **Email enumeration**: the session endpoint answers "not provisioned" (403)
   for valid tokens of unknown staff accounts. Requires a valid Firebase
   credential, so exposure is bounded to other login-enabled Google accounts.

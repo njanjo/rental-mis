@@ -229,6 +229,43 @@ Anything not listed here follows the spec as written.
   `firebase-admin` (through `jwks-rsa`) on CommonJS runtimes such as the
   Netlify Node sandbox.
 
+## Phase 8 — OTP two-factor login
+
+- **2FA for every staff login.** The flow is password sign-in (Firebase) →
+  `POST /api/auth/otp/request` (keeps the ID token check, never mints a
+  session) → 6-digit code by Beam SMS to the profile's `phoneE164` →
+  `POST /api/auth/otp/verify` → session. A staff profile without a phone
+  cannot log in.
+- **The verify route is the only session mint.** The former
+  `POST /api/auth/session` (raw ID token → cookie) would have made the OTP
+  factor cosmetic — anyone holding just email + password could mint a session
+  — so it was removed when OTP shipped; only its DELETE (sign-out) survives.
+  The AuthProvider no longer pushes sessions from ID tokens.
+- **Challenges are hash-only and bounded.** `otpChallenges` stores a SHA-256
+  of the code (a database leak cannot emit login codes), expires in 10
+  minutes, allows 5 attempts, and rate-limits re-requests to one per 60
+  seconds. Every failed verify is audited (`auth.otp_verify_failed`) in the
+  same transaction as the attempt counter, so brute-force noise is visible.
+- **Machine binding via a canonical fingerprint.** `SHA-256(secret \0 ip \0
+  UA)` (`lib/auth/fingerprint-material.ts`) binds each challenge to its
+  requester and the minted session to its owner (`__session_fp` companion
+  cookie; Edge middleware recomputes and bounces mismatches). Both runtimes
+  must hash the same composition — a drift rejects every fresh session and
+  loops sign-in forever, which is why the parity is unit-tested. `secret` is
+  `SESSION_FINGERPRINT_SECRET`; unset (dev/emulator) disables the binding
+  rather than failing the flow.
+- **Phone-swap is refused mid-challenge.** The verify route re-reads the
+  profile and rejects if the challenge's phone no longer matches it, and
+  rejects accounts deactivated after the challenge was issued — also why the
+  profile is loaded before the code check (failed attempts audit a real role).
+- **Delivery is inline, with cron fallback.** The request route drains the
+  outbox through the Beam worker immediately after committing the challenge
+  (best-effort; failures fall back to the scheduled `?job=drain|all` cron), so
+  the code arrives in seconds rather than whenever a scheduler next runs.
+  `otp_cleanup` reaps expired challenges (grace window `OTP_GRACE_MINUTES`).
+- **Idempotent UI resend.** "Resend" performs a full password re-auth rather
+  than trusting a bare challenge id, and honours the same 60-second cooldown.
+
 ## Still open (needed by Phase 7/8)
 
 1. ~~Real Firebase project ids for dev / staging / production~~ — production is
