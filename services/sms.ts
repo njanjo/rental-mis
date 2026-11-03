@@ -336,6 +336,7 @@ export function smsSystemActor(role: Role = "admin"): SessionUser {
 export async function runOutboxWorker(
   fetchImpl: typeof fetch = fetch,
 ): Promise<SendOutcome> {
+  const db = adminDb();
   let config: { baseUrl: string; token: string; senderId: string } | null = null;
   try {
     config = assertBeamConfig();
@@ -344,7 +345,6 @@ export async function runOutboxWorker(
       throw cause;
     }
     // Dev mode without Beam config: mark queued messages as sent so OTPs flow.
-    const db = adminDb();
     const snapshot = await db
       .collection(OUTBOX)
       .where("status", "in", ["queued", "failed"])
@@ -355,56 +355,24 @@ export async function runOutboxWorker(
 
     const outcome: SendOutcome = { sent: 0, retried: 0, dead: 0 };
     await Promise.all(
-      snapshot.docs.map(async (doc) => {
-        const item = doc.data() as SmsOutboxItem;
+      snapshot.docs.map(async (docSnap) => {
+        const item = docSnap.data() as SmsOutboxItem;
         console.log(`[DEV SMS] To ${item.phoneE164}: ${item.body}`);
         await db.runTransaction(async (tx) => {
-          const ref = db.collection(OUTBOX).doc(doc.id);
+          const ref = db.collection(OUTBOX).doc(docSnap.id);
           tx.update(ref, {
             status: "sent",
             attempts: (item.attempts ?? 0) + 1,
             lastError: FieldValue.delete(),
             updatedAt: FieldValue.serverTimestamp(),
           });
-          tx.create(db.collection(SMS_LOGS).doc(), logRow(doc.id, "sent"));
+          tx.create(db.collection(SMS_LOGS).doc(), logRow(docSnap.id, "sent"));
         });
         outcome.sent += 1;
       }),
     );
     return outcome;
   }
-
-  const snapshot = await db
-    .collection(OUTBOX)
-    .where("status", "in", ["queued", "failed"])
-    .where("nextAttemptAt", "<=", Timestamp.now())
-    .orderBy("nextAttemptAt")
-    .limit(SEND_BATCH)
-    .get();
-
-  const outcome: SendOutcome = { sent: 0, retried: 0, dead: 0 };
-
-  await Promise.all(
-    snapshot.docs.map(async (doc) => {
-      const result = await sendOne(doc, config, fetchImpl);
-      outcome[result] += 1;
-    }),
-  );
-
-  if (snapshot.size > 0) {
-    await db.runTransaction(async (tx) => {
-      writeAuditLog(tx, {
-        actorUid: "system:sms",
-        actorRole: "admin",
-        action: "sms.worker_ran",
-        entityType: "smsOutbox",
-        entityId: "batch",
-        after: { ...outcome, scanned: snapshot.size },
-      });
-    });
-  }
-
-  return outcome;
 }
 
 // ---------------------------------------------------------------------------
