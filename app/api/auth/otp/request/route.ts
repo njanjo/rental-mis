@@ -33,20 +33,21 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
-  let payload: unknown;
   try {
-    payload = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
-  }
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+    }
 
-  const parsed = bodySchema.safeParse(payload);
-  if (!parsed.success) {
-    return NextResponse.json(
-      { error: "A valid ID token is required." },
-      { status: 400 },
-    );
-  }
+    const parsed = bodySchema.safeParse(payload);
+    if (!parsed.success) {
+      return NextResponse.json(
+        { error: "A valid ID token is required." },
+        { status: 400 },
+      );
+    }
 
   // 1. Verify the Firebase ID token.
   let uid: string;
@@ -182,6 +183,10 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({ ok: true, challengeId: challengeRef.id, phoneE164: maskPhone(phoneE164) });
+  } catch (error) {
+    console.error("[auth/otp/request] unexpected error", error);
+    return NextResponse.json({ error: "Could not send the verification code. Try again." }, { status: 500 });
+  }
 }
 
 /** Show the last four digits only; the full number lives in the challenge doc. */
