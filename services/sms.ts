@@ -341,10 +341,8 @@ export async function runOutboxWorker(
   try {
     config = assertBeamConfig();
   } catch (cause) {
-    if (process.env.NODE_ENV === "production") {
-      throw cause;
-    }
-    if (process.env.NODE_ENV === "test") {
+    const env = process.env.NODE_ENV;
+    if (env === "production" || env === "test") {
       throw cause;
     }
     if (process.env.NODE_ENV === "test") {
