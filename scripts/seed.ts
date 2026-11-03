@@ -50,6 +50,8 @@ const staff: Array<{
   role: Role;
   propertyIds: string[];
   active: boolean;
+  /** OTP destination — every staff login now requires a phone (2FA). */
+  phoneE164: string;
 }> = [
   {
     uid: "staff_admin",
@@ -58,6 +60,7 @@ const staff: Array<{
     role: "admin",
     propertyIds: [],
     active: true,
+    phoneE164: "+254700000001",
   },
   {
     uid: "staff_manager",
@@ -66,6 +69,7 @@ const staff: Array<{
     role: "property_manager",
     propertyIds: ["prop_kilimani"],
     active: true,
+    phoneE164: "+254700000002",
   },
   {
     uid: "staff_finance",
@@ -74,6 +78,7 @@ const staff: Array<{
     role: "finance",
     propertyIds: ["prop_kilimani"],
     active: true,
+    phoneE164: "+254700000003",
   },
   {
     uid: "staff_maintenance",
@@ -82,6 +87,7 @@ const staff: Array<{
     role: "maintenance",
     propertyIds: ["prop_kilimani"],
     active: true,
+    phoneE164: "+254700000004",
   },
   {
     uid: "staff_auditor",
@@ -90,6 +96,7 @@ const staff: Array<{
     role: "auditor",
     propertyIds: [],
     active: true,
+    phoneE164: "+254700000005",
   },
 ];
 
@@ -107,6 +114,7 @@ const COLLECTIONS = [
   "providerEvents",
   "smsOutbox",
   "smsLogs",
+  "otpChallenges",
   "maintenanceRequests",
   "auditLogs",
   "bankSyncRuns",
@@ -155,6 +163,7 @@ async function upsertStaff(): Promise<void> {
           role: person.role,
           propertyIds: person.propertyIds,
           active: person.active,
+          phoneE164: person.phoneE164,
           createdAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
         },
