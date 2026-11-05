@@ -1,6 +1,7 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { nairobiMonthKey } from "@/lib/dates";
 import type { SessionUser } from "@/lib/auth/session";
 import { adminDb } from "@/lib/firebase/admin";
 import {
@@ -278,10 +279,36 @@ describe("collectionTrend", () => {
 
     const trend = await collectionTrend(admin, 6);
     expect(trend).toHaveLength(6);
-    // Oldest first, newest month last: this month's money lands in the last
-    // point, the 35-day-old payments net of the reversal one month back.
+    expect(trend[5].key).toBe(nairobiMonthKey(stubNow));
+    // This month's money lands in the last point.
     expect(trend[5].minor).toBe(4_500_000);
-    expect([trend[3].minor, trend[4].minor]).toContain(2_000_000 - 500_000);
+
+    // The 35-day-old payment and its reversal sit close to a Nairobi month
+    // boundary whose side depends on the wall-clock time the suite runs
+    // (e.g. 35.5 days before Nov 5 mid-morning is Sep 30). Locate the
+    // buckets they actually landed in and assert the net there.
+    const netIndex = trend.findIndex(
+      (point) => point.key === nairobiMonthKey(stubNow - 35 * DAY),
+    );
+    const reversalIndex = trend.findIndex(
+      (point) => point.key === nairobiMonthKey(stubNow - 35.5 * DAY),
+    );
+    expect(netIndex).toBeGreaterThan(-1);
+    expect(reversalIndex).toBeGreaterThan(-1);
+    expect(reversalIndex).toBeLessThanOrEqual(netIndex);
+
+    if (netIndex === reversalIndex) {
+      expect(trend[netIndex].minor).toBe(2_000_000 - 500_000);
+    } else {
+      // Exactly one month apart at most; the reversal is in the earlier one.
+      expect(reversalIndex).toBe(netIndex - 1);
+      expect(trend[netIndex].minor).toBe(2_000_000);
+      expect(trend[reversalIndex].minor).toBe(-500_000);
+    }
+
+    // Nothing else was seeded inside the trend window.
+    const windowSum = trend.reduce((sum, point) => sum + point.minor, 0);
+    expect(windowSum).toBe(4_500_000 + (2_000_000 - 500_000));
   });
 });
 
