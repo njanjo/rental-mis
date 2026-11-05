@@ -50,7 +50,7 @@ const staff: Array<{
   role: Role;
   propertyIds: string[];
   active: boolean;
-  /** OTP destination — every staff login now requires a phone (2FA). */
+  /** Optional contact phone in E.164. Not used for sign-in. */
   phoneE164: string;
 }> = [
   {
@@ -114,7 +114,6 @@ const COLLECTIONS = [
   "providerEvents",
   "smsOutbox",
   "smsLogs",
-  "otpChallenges",
   "maintenanceRequests",
   "auditLogs",
   "bankSyncRuns",

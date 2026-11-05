@@ -109,8 +109,7 @@ export default async function LoginPage({
           <LoginForm nextPath={nextPath} showDemoHint={showDemoHint} />
 
           <p className="mt-8 text-xs text-muted-foreground">
-            Forgot your password? Use the reset link above — no admin needed.
-            Not provisioned yet? Contact your administrator.
+            Forgot your password? Contact your administrator to reset it.
           </p>
         </div>
       </main>

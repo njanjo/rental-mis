@@ -126,11 +126,6 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    match /otpChallenges/{id} {
-      // OTP challenges are server-only; the client never reads or writes them.
-      allow read, write: if false;
-    }
-
     match /maintenanceRequests/{id} {
       allow read: if activeUser();
       allow write: if false; // service enforces transitions and assignment

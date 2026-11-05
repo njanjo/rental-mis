@@ -84,7 +84,7 @@ function fail(message: string): never {
 const __usage =
   "\nUsage:\n" +
   "  npx tsx scripts/provision-staff.ts --project <project-id> --confirm \\\n" +
-  "    --email <email> --name \"Full Name\" [--role admin] [--property id1,id2] [--password <pw>] [--phone +254712345678] [--env-file <file>]\n";
+  "    --email <email> --name \"Full Name\" [--role admin] [--property id1,id2] [--password <pw>] [--phone +254712345678 (optional)] [--env-file <file>]\n";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -133,10 +133,7 @@ if (!flags.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flags.email)) {
 if (!flags.name) {
     fail("--name \"Full Name\" is required (it becomes the users doc fullName).");
   }
-  if (!flags.phone) {
-    fail("--phone +254XXXXXXXXX is required (used for OTP second factor).");
-  }
-  if (!/^\+254[17]\d{8}$/.test(flags.phone)) {
+  if (flags.phone && !/^\+254[17]\d{8}$/.test(flags.phone)) {
     fail("--phone must be a Kenyan mobile number in E.164, e.g. +254712345678.");
   }
   if (!ROLES.includes(flags.role)) {
@@ -282,7 +279,7 @@ async function main(): Promise<void> {
       email: flags.email,
       role: flags.role,
       propertyIds: flags.propertyIds,
-      phoneE164: flags.phone,
+      ...(flags.phone ? { phoneE164: flags.phone } : {}),
       active: true,
       createdBy: "bootstrap:provision-staff",
       createdAt: FieldValue.serverTimestamp(),
@@ -303,7 +300,7 @@ async function main(): Promise<void> {
       fullName: flags.name,
       role: flags.role,
       propertyIds: flags.propertyIds,
-      phoneE164: flags.phone,
+      ...(flags.phone ? { phoneE164: flags.phone } : {}),
       active: true,
       source: existed ? "updated" : "created",
     },
