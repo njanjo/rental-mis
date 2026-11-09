@@ -19,13 +19,20 @@ function emulatorTarget(): { host: string; port: number } {
 }
 
 const PROFILES = {
-  "admin-uid": { role: "admin", active: true, propertyIds: [] },
-  "manager-uid": { role: "property_manager", active: true, propertyIds: ["prop_1"] },
-  "finance-uid": { role: "finance", active: true, propertyIds: ["prop_1"] },
-  "maintenance-uid": { role: "maintenance", active: true, propertyIds: ["prop_1"] },
-  "auditor-uid": { role: "auditor", active: true, propertyIds: [] },
-  "inactive-uid": { role: "finance", active: false, propertyIds: [] },
+  "admin-uid": { role: "admin", active: true, propertyIds: [], accountId: "acc_a" },
+  "manager-uid": { role: "property_manager", active: true, propertyIds: ["prop_1"], accountId: "acc_a" },
+  "finance-uid": { role: "finance", active: true, propertyIds: ["prop_1"], accountId: "acc_a" },
+  "maintenance-uid": { role: "maintenance", active: true, propertyIds: ["prop_1"], accountId: "acc_a" },
+  "auditor-uid": { role: "auditor", active: true, propertyIds: [], accountId: "acc_a" },
+  "inactive-uid": { role: "finance", active: false, propertyIds: [], accountId: "acc_a" },
+  "no-account-uid": { role: "admin", active: true, propertyIds: [], accountId: "" },
+  // Same roles, different customer: the isolation suite proves they see nothing.
+  "other-admin-uid": { role: "admin", active: true, propertyIds: [], accountId: "acc_b" },
+  "other-finance-uid": { role: "finance", active: true, propertyIds: [], accountId: "acc_b" },
 } as const;
+
+const ACCOUNT_A = "acc_a";
+const ACCOUNT_B = "acc_b";
 
 let testEnv: RulesTestEnvironment;
 
@@ -58,35 +65,66 @@ beforeEach(async () => {
           email: `${uid}@rentalmis.test`,
           active: profile.active,
           role: profile.role,
+          accountId: profile.accountId,
           propertyIds: profile.propertyIds,
         }),
       ),
     );
+    await setDoc(doc(db, "accounts", ACCOUNT_A), {
+      name: "Account A",
+      customerType: "agency",
+      status: "active",
+    });
+    await setDoc(doc(db, "accounts", ACCOUNT_B), {
+      name: "Account B",
+      customerType: "agency",
+      status: "active",
+    });
     await setDoc(doc(db, "properties", "prop_1"), {
+      accountId: ACCOUNT_A,
       name: "Kilimani Heights",
       active: true,
     });
     await setDoc(doc(db, "units", "unit_1"), {
+      accountId: ACCOUNT_A,
       propertyId: "prop_1",
       unitNumber: "A1",
       status: "vacant",
     });
     await setDoc(doc(db, "tenants", "tnt_1"), {
+      accountId: ACCOUNT_A,
       fullName: "Grace Wanjiru",
       status: "active",
     });
     await setDoc(doc(db, "leases", "lease_1"), {
+      accountId: ACCOUNT_A,
       tenantId: "tnt_1",
       unitId: "unit_1",
       propertyId: "prop_1",
       status: "active",
     });
-    await setDoc(doc(db, "invoices", "inv_1"), { status: "open", balanceMinor: 100 });
-    await setDoc(doc(db, "payments", "pay_1"), { status: "confirmed" });
-    await setDoc(doc(db, "auditLogs", "log_1"), { action: "test" });
-    await setDoc(doc(db, "providerEvents", "evt_1"), { status: "received" });
-    await setDoc(doc(db, "systemSettings", "billing"), { currency: "KES" });
-    await setDoc(doc(db, "maintenanceRequests", "mr_1"), { status: "open" });
+    await setDoc(doc(db, "invoices", "inv_1"), {
+      accountId: ACCOUNT_A,
+      status: "open",
+      balanceMinor: 100,
+    });
+    await setDoc(doc(db, "payments", "pay_1"), {
+      accountId: ACCOUNT_A,
+      status: "confirmed",
+    });
+    await setDoc(doc(db, "auditLogs", "log_1"), {
+      accountId: ACCOUNT_A,
+      action: "test",
+    });
+    await setDoc(doc(db, "providerEvents", "evt_1"), {
+      accountId: ACCOUNT_A,
+      status: "received",
+    });
+    await setDoc(doc(db, "systemSettings", ACCOUNT_A), { currency: "KES" });
+    await setDoc(doc(db, "maintenanceRequests", "mr_1"), {
+      accountId: ACCOUNT_A,
+      status: "open",
+    });
   });
 });
 
@@ -107,6 +145,11 @@ describe("authentication gate", () => {
 
   it("denies an inactive user", async () => {
     const db = dbFor("inactive-uid");
+    await assertFails(getDoc(doc(db, "properties", "prop_1")));
+  });
+
+  it("denies a profile that has no account", async () => {
+    const db = dbFor("no-account-uid");
     await assertFails(getDoc(doc(db, "properties", "prop_1")));
   });
 });
@@ -257,6 +300,7 @@ describe("audit and provider events", () => {
     await testEnv.withSecurityRulesDisabled(async (context) => {
       const db = context.firestore();
       await setDoc(doc(db, "smsOutbox", "sms_1"), {
+        accountId: ACCOUNT_A,
         status: "queued",
       });
     });
@@ -326,13 +370,13 @@ describe("maintenance", () => {
 
 describe("settings and catch-all", () => {
   it("restricts system settings to admin reads", async () => {
-    await assertSucceeds(getDoc(doc(dbFor("admin-uid"), "systemSettings", "billing")));
-    await assertFails(getDoc(doc(dbFor("finance-uid"), "systemSettings", "billing")));
+    await assertSucceeds(getDoc(doc(dbFor("admin-uid"), "systemSettings", ACCOUNT_A)));
+    await assertFails(getDoc(doc(dbFor("finance-uid"), "systemSettings", ACCOUNT_A)));
   });
 
   it("never allows clients to write system settings", async () => {
     await assertFails(
-      setDoc(doc(dbFor("admin-uid"), "systemSettings", "billing"), { currency: "USD" }),
+      setDoc(doc(dbFor("admin-uid"), "systemSettings", ACCOUNT_A), { currency: "USD" }),
     );
   });
 
@@ -344,5 +388,63 @@ describe("settings and catch-all", () => {
     // Sanity: an active user can read the property they are scoped to.
     const snapshot = await getDoc(doc(dbFor("manager-uid"), "properties", "prop_1"));
     expect(snapshot.exists()).toBe(true);
+  });
+});
+
+describe("accounts", () => {
+  it("lets an admin read only their own account document", async () => {
+    await assertSucceeds(getDoc(doc(dbFor("admin-uid"), "accounts", ACCOUNT_A)));
+    await assertFails(getDoc(doc(dbFor("admin-uid"), "accounts", ACCOUNT_B)));
+  });
+
+  it("hides the account document from non-admins", async () => {
+    await assertFails(getDoc(doc(dbFor("finance-uid"), "accounts", ACCOUNT_A)));
+    await assertFails(getDoc(doc(dbFor("auditor-uid"), "accounts", ACCOUNT_A)));
+  });
+
+  it("never allows clients to create or edit accounts", async () => {
+    await assertFails(
+      setDoc(doc(dbFor("admin-uid"), "accounts", ACCOUNT_B), {
+        name: "Rogue",
+        status: "active",
+      }),
+    );
+  });
+});
+
+describe("account isolation", () => {
+  it("denies every cross-account read for an otherwise privileged user", async () => {
+    const db = dbFor("other-admin-uid");
+    await assertFails(getDoc(doc(db, "properties", "prop_1")));
+    await assertFails(getDoc(doc(db, "units", "unit_1")));
+    await assertFails(getDoc(doc(db, "tenants", "tnt_1")));
+    await assertFails(getDoc(doc(db, "leases", "lease_1")));
+    await assertFails(getDoc(doc(db, "invoices", "inv_1")));
+    await assertFails(getDoc(doc(db, "payments", "pay_1")));
+    await assertFails(getDoc(doc(db, "auditLogs", "log_1")));
+    await assertFails(getDoc(doc(db, "maintenanceRequests", "mr_1")));
+    await assertFails(getDoc(doc(db, "systemSettings", ACCOUNT_A)));
+  });
+
+  it("denies cross-account reads for finance too", async () => {
+    const db = dbFor("other-finance-uid");
+    await assertFails(getDoc(doc(db, "payments", "pay_1")));
+    await assertFails(getDoc(doc(db, "invoices", "inv_1")));
+  });
+
+  it("denies cross-account reads even to an in-account admin", async () => {
+    // The doc exists, but belongs to ACCOUNT_A; account B must not see it.
+    const db = dbFor("other-admin-uid");
+    await assertFails(getDoc(doc(db, "properties", "prop_1")));
+    // ...while account A's admin still can.
+    await assertSucceeds(getDoc(doc(dbFor("admin-uid"), "properties", "prop_1")));
+  });
+
+  it("keeps role gates on top of account membership", async () => {
+    // Account A manager is in-account but maintenance requests are open to all;
+    // payments stay finance-only within the same account.
+    const db = dbFor("manager-uid");
+    await assertSucceeds(getDoc(doc(db, "maintenanceRequests", "mr_1")));
+    await assertFails(getDoc(doc(db, "payments", "pay_1")));
   });
 });

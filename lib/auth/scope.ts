@@ -25,6 +25,30 @@ export function isReadOnly(user: SessionUser): boolean {
   return user.role === "auditor";
 }
 
+/** The account this server path may touch, or throws. Never rely on request data. */
+export function requireAccount(user: SessionUser): string {
+  if (!user.accountId) {
+    throw new ServiceError(
+      "forbidden",
+      "Your session does not belong to an account. Sign in again.",
+    );
+  }
+  return user.accountId;
+}
+
+/** Assert an actor only touches documents of their own account. */
+export function assertAccount(user: SessionUser, accountId: string): void {
+  if (!accountId) {
+    throw new ServiceError("validation", "An account is required.");
+  }
+  if (user.accountId !== accountId) {
+    throw new ServiceError(
+      "forbidden",
+      "You do not have access to this account.",
+    );
+  }
+}
+
 export function assertCapability(user: SessionUser, capability: Capability): void {
   if (!can(user.role, capability)) {
     throw new ServiceError(

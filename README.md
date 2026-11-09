@@ -8,11 +8,12 @@ no portal** — they receive SMS and pay by M-Pesa or bank.
 > Specification: `Rental_MIS_Firebase_Developer_Documentation` (v1.0, 12 pages).
 > This README tracks what is actually built, so treat it as the status source.
 
-## Status — Phases 2–7 built · Phase 8 (launch readiness) in progress
+## Status — Phases 2–7 built · Phase 8 (launch readiness) in progress · BOMA Phase 1 multi-tenant scoping done
 
 | Phase | Scope | State |
 | --- | --- | --- |
 | 1 | Discovery (banks, M-Pesa products, finance policy) | open decisions |
+| **BOMA 1** | **Multi-tenant scoping: flat collections + `accountId` on every doc, account-scoped rules/indexes/scripts** | **done** — see `docs/DECISIONS.md` Phase 1 (BOMA Cloud) |
 | **2** | **Foundation: Next.js, Firebase, auth, roles, rules, CI hygiene** | **done** |
 | **3** | **Operations: properties, units, tenants, leases, maintenance** | **done** |
 | **4** | **Billing: invoices, allocations, credit, arrears** | **done** |

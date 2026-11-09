@@ -1,6 +1,6 @@
 import "server-only";
 
-import { FieldPath } from "firebase-admin/firestore";
+import { FieldPath, type Query } from "firebase-admin/firestore";
 
 import { adminDb } from "@/lib/firebase/admin";
 import type { StaffOption } from "@/lib/types/views";
@@ -11,14 +11,16 @@ import type { Role } from "@/lib/types";
  * caller is responsible for deciding which roles may be listed.
  */
 export async function listStaffOptions(
+  accountId: string,
   roles?: Role[],
   options: { propertyId?: string; includeInactive?: boolean } = {},
 ): Promise<StaffOption[]> {
-  const snapshot = await adminDb()
+  const query: Query = adminDb()
     .collection("users")
+    .where("accountId", "==", accountId)
     .orderBy("fullName")
-    .limit(200)
-    .get();
+    .limit(200);
+  const snapshot = await query.get();
 
   return snapshot.docs
     .map((doc) => {
@@ -43,7 +45,10 @@ export async function listStaffOptions(
     });
 }
 
-export async function getStaffNames(uids: string[]): Promise<Record<string, string>> {
+export async function getStaffNames(
+  accountId: string,
+  uids: string[],
+): Promise<Record<string, string>> {
   const unique = [...new Set(uids.filter(Boolean))];
   if (unique.length === 0) return {};
 
@@ -54,6 +59,7 @@ export async function getStaffNames(uids: string[]): Promise<Record<string, stri
     const chunk = unique.slice(index, index + 30);
     const snapshot = await db
       .collection("users")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {

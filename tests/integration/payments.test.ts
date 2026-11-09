@@ -18,6 +18,7 @@ import {
 } from "@/services/payments";
 
 const db = () => adminDb();
+const ACCOUNT = "acc_demo";
 
 function actor(
   role: Role,
@@ -29,6 +30,7 @@ function actor(
     email: `${uid}@rentalmis.test`,
     fullName: uid,
     role,
+    accountId: ACCOUNT,
     active: true,
     propertyIds,
   };
@@ -59,6 +61,7 @@ async function seedUser(user: SessionUser): Promise<void> {
     .set({
       uid: user.uid,
       fullName: user.fullName,
+      accountId: ACCOUNT,
       email: user.email,
       role: user.role,
       propertyIds: user.propertyIds,
@@ -73,6 +76,7 @@ async function seedProperty(id: string, name: string): Promise<void> {
     .collection("properties")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       name,
       nameLower: name.toLowerCase(),
       address: "Test address",
@@ -89,6 +93,7 @@ async function seedUnit(id: string, propertyId: string): Promise<void> {
     .collection("units")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       propertyId,
       unitNumber: id.toUpperCase(),
       rentAmountMinor: 4_500_000,
@@ -119,6 +124,7 @@ async function seedTenant(
     .collection("tenants")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       fullName: options.fullName ?? "Grace Wanjiru",
       fullNameLower: (options.fullName ?? "Grace Wanjiru").toLowerCase(),
       phoneE164: options.phoneE164 ?? "+254712345678",
@@ -148,6 +154,7 @@ async function seedLease(
     .collection("leases")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       tenantId,
       unitId,
       propertyId,
@@ -185,6 +192,7 @@ async function seedInvoice(
     .collection("invoices")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       tenantId: options.tenantId ?? "tnt_1",
       leaseId: options.leaseId ?? "lease_1",
       unitId: options.unitId ?? "unit_1",
@@ -209,6 +217,7 @@ async function seedPayment(
     .collection("payments")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       provider: "mpesa",
       providerTransactionId: id.toUpperCase(),
       amountMinor: 1_000_000,
@@ -231,6 +240,7 @@ async function seedUnmatchedRow(
     .collection("unmatchedPayments")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       paymentId,
       candidateTenantIds: [],
       reason: "No reliable tenant match",

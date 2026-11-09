@@ -59,8 +59,8 @@ const columns: DataTableColumn<SmsOutboxListItem>[] = [
 ];
 
 export default async function SmsPage() {
-  await requireAnyCapability(["manage_sms"]);
-  const outbox = await listSmsOutbox(50);
+  const user = await requireAnyCapability(["manage_sms"]);
+  const outbox = await listSmsOutbox(user, 50);
 
   return (
     <>

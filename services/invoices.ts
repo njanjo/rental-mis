@@ -14,6 +14,7 @@ import {
   assertCapability,
   assertPropertyAccess,
   chunkIn,
+  requireAccount,
   scopePropertyIds,
 } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
@@ -84,11 +85,15 @@ function inScope(scope: string[] | null, propertyId: string): boolean {
  * so it narrows to live invoices in the query and finishes in memory.
  */
 function buildQuery(
+  accountId: string,
   scope: string[] | null,
   params: ListInvoicesParams,
 ): { query: Query; scopeFallback: string[] | null } {
   const db = adminDb();
-  let query: Query = db.collection(COLLECTION).orderBy("dueDate", "desc");
+  let query: Query = db
+    .collection(COLLECTION)
+    .where("accountId", "==", accountId)
+    .orderBy("dueDate", "desc");
   let scopeFallback: string[] | null = null;
 
   if (params.propertyId) {
@@ -127,6 +132,7 @@ interface TenantSummary {
 }
 
 async function tenantsById(
+  accountId: string,
   ids: string[],
 ): Promise<Record<string, TenantSummary>> {
   const unique = [...new Set(ids.filter(Boolean))];
@@ -138,6 +144,7 @@ async function tenantsById(
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection("tenants")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -153,6 +160,7 @@ async function tenantsById(
 }
 
 async function unitsById(
+  accountId: string,
   ids: string[],
 ): Promise<Record<string, { unitNumber: string }>> {
   const unique = [...new Set(ids.filter(Boolean))];
@@ -164,6 +172,7 @@ async function unitsById(
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection("units")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -176,6 +185,7 @@ async function unitsById(
 }
 
 async function decorate(
+  accountId: string,
   docs: DocumentSnapshot[],
 ): Promise<InvoiceListItem[]> {
   if (docs.length === 0) return [];
@@ -183,9 +193,9 @@ async function decorate(
   const rows = docs.map((doc) => ({ id: doc.id, data: doc.data() as Invoice }));
 
   const [propertyNames, tenants, units] = await Promise.all([
-    getPropertyNames(rows.map((row) => row.data.propertyId)),
-    tenantsById(rows.map((row) => row.data.tenantId)),
-    unitsById(rows.map((row) => row.data.unitId ?? "")),
+    getPropertyNames(accountId, rows.map((row) => row.data.propertyId)),
+    tenantsById(accountId, rows.map((row) => row.data.tenantId)),
+    unitsById(accountId, rows.map((row) => row.data.unitId ?? "")),
   ]);
 
   return rows.map(({ id, data }) => {
@@ -233,6 +243,7 @@ export async function listInvoices(
 ): Promise<PageResult<InvoiceListItem>> {
   assertCapability(actor, "view_financials");
 
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   if (params.propertyId) assertPropertyAccess(actor, params.propertyId);
 
@@ -240,14 +251,14 @@ export async function listInvoices(
   const q = params.q?.trim().toLowerCase() ?? "";
   const overdueOnly = params.status === "overdue";
 
-  const { query: base, scopeFallback } = buildQuery(scope, params);
+  const { query: base, scopeFallback } = buildQuery(accountId, scope, params);
   // Post-filtered views (search, derived overdue, >30 scoped properties) run in
   // memory because Firestore cannot express them; they have no next cursor.
   const inMemory = Boolean(q || overdueOnly || scopeFallback);
 
   if (inMemory) {
     const snapshot = await base.limit(SEARCH_LIMIT).get();
-    let rows = await decorate(snapshot.docs);
+    let rows = await decorate(accountId, snapshot.docs);
     if (scopeFallback) {
       rows = rows.filter((row) => inScope(scopeFallback, row.propertyId));
     }
@@ -274,7 +285,7 @@ export async function listInvoices(
   const hasMore = docs.length > pageSize;
   if (hasMore) docs = docs.slice(0, pageSize);
 
-  const items = await decorate(docs);
+  const items = await decorate(accountId, docs);
 
   return {
     items,
@@ -283,11 +294,13 @@ export async function listInvoices(
 }
 
 async function allocationsForInvoice(
+  accountId: string,
   invoiceId: string,
 ): Promise<InvoiceAllocationItem[]> {
   const db = adminDb();
   const snapshot = await db
     .collection("paymentAllocations")
+    .where("accountId", "==", accountId)
     .where("invoiceId", "==", invoiceId)
     .orderBy("createdAt", "asc")
     .get();
@@ -303,6 +316,7 @@ async function allocationsForInvoice(
   for (const chunk of chunkIn(allocations.map((row) => row.data.paymentId))) {
     const paymentSnapshot = await db
       .collection("payments")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     paymentSnapshot.docs.forEach((doc) => {
@@ -311,6 +325,7 @@ async function allocationsForInvoice(
   }
 
   const staffNames = await getStaffNames(
+    accountId,
     allocations.map((row) => row.data.createdBy),
   );
 
@@ -341,10 +356,13 @@ export async function getInvoice(
   }
 
   const invoice = snapshot.data() as Invoice;
+  if (invoice.accountId !== actor.accountId) {
+    throw new ServiceError("not_found", "Invoice not found.");
+  }
   assertPropertyAccess(actor, invoice.propertyId);
 
-  const [item] = await decorate([snapshot]);
-  const allocations = await allocationsForInvoice(invoiceId);
+  const [item] = await decorate(actor.accountId, [snapshot]);
+  const allocations = await allocationsForInvoice(actor.accountId, invoiceId);
 
   return { ...item, allocations };
 }
@@ -362,6 +380,7 @@ export async function generateInvoices(
 ): Promise<InvoiceGenerationResult> {
   assertCapability(actor, "manage_invoices");
 
+  const accountId = requireAccount(actor);
   const bounds = periodBounds(input.period);
   if (!bounds) {
     throw new ServiceError("validation", "Choose a valid billing month.", {
@@ -377,6 +396,7 @@ export async function generateInvoices(
   do {
     let query: Query = db
       .collection(LEASE_COLLECTION)
+      .where("accountId", "==", accountId)
       .where("status", "==", "active")
       .orderBy(FieldPath.documentId())
       .limit(LEASE_SCAN_LIMIT);
@@ -431,6 +451,12 @@ export async function generateInvoices(
       const tenant = tenantSnapshot.exists
         ? (tenantSnapshot.data() as Tenant)
         : undefined;
+      if (tenant && tenant.accountId !== accountId) {
+        throw new ServiceError(
+          "forbidden",
+          "You do not have access to this tenant.",
+        );
+      }
       // Overpayments held as tenant credit settle the new invoice immediately.
       const creditAvailableMinor = Math.max(0, tenant?.creditBalanceMinor ?? 0);
       const creditAppliedMinor = Math.min(creditAvailableMinor, amountDueMinor);
@@ -438,6 +464,7 @@ export async function generateInvoices(
       const balanceMinor = amountDueMinor - creditAppliedMinor;
 
       tx.set(ref, {
+        accountId,
         leaseId: lease.id,
         tenantId: lease.data.tenantId,
         unitId: lease.data.unitId,
@@ -463,6 +490,7 @@ export async function generateInvoices(
         });
 
         writeAuditLog(tx, {
+          accountId: actor.accountId,
           actorUid: actor.uid,
           actorRole: actor.role,
           action: "invoice.credit_applied",
@@ -477,6 +505,7 @@ export async function generateInvoices(
       }
 
       writeAuditLog(tx, {
+        accountId: actor.accountId,
         actorUid: actor.uid,
         actorRole: actor.role,
         action: "invoice.generated",
@@ -530,6 +559,9 @@ export async function voidInvoice(
     }
 
     const invoice = snapshot.data() as Invoice;
+    if (invoice.accountId !== actor.accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this invoice.");
+    }
     assertPropertyAccess(actor, invoice.propertyId);
 
     if (invoice.status === "void") {
@@ -552,6 +584,7 @@ export async function voidInvoice(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "invoice.voided",
@@ -590,6 +623,7 @@ interface AggregateTotals {
  * server-side, so the summary stays exact without loading every invoice.
  */
 async function invoiceTotals(
+  accountId: string,
   scope: string[] | null,
   propertyId: string | undefined,
   narrow: (query: Query) => Query,
@@ -601,7 +635,9 @@ async function invoiceTotals(
   let count = 0;
 
   for (const chunk of chunks) {
-    let query: Query = db.collection(COLLECTION);
+    let query: Query = db
+      .collection(COLLECTION)
+      .where("accountId", "==", accountId);
     if (propertyId) {
       query = query.where("propertyId", "==", propertyId);
     } else if (chunk) {
@@ -631,6 +667,7 @@ export async function getInvoiceSummary(
   options: { propertyId?: string; periodKey?: string } = {},
 ): Promise<InvoiceSummary> {
   assertCapability(actor, "view_financials");
+  const accountId = requireAccount(actor);
   if (options.propertyId) assertPropertyAccess(actor, options.propertyId);
 
   const scope = scopePropertyIds(actor);
@@ -644,12 +681,14 @@ export async function getInvoiceSummary(
 
   const [outstanding, overdue, billed] = await Promise.all([
     invoiceTotals(
+      accountId,
       scope,
       options.propertyId,
       (query) => query.where("status", "in", ["open", "partial"]),
       "balanceMinor",
     ),
     invoiceTotals(
+      accountId,
       scope,
       options.propertyId,
       (query) =>
@@ -659,6 +698,7 @@ export async function getInvoiceSummary(
       "balanceMinor",
     ),
     invoiceTotals(
+      accountId,
       scope,
       options.propertyId,
       (query) =>

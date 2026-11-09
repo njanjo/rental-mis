@@ -16,6 +16,7 @@ function user(role: Role, propertyIds: string[] = []): SessionUser {
     email: `${role}@rentalmis.test`,
     fullName: role,
     role,
+    accountId: "acc_demo",
     active: true,
     propertyIds,
   };

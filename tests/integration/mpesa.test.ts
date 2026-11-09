@@ -13,12 +13,14 @@ import {
 } from "@/services/mpesa";
 
 const db = () => adminDb();
+const ACCOUNT = "acc_demo";
 
 const admin: SessionUser = {
   uid: "uid_admin",
   email: "admin@rentalmis.test",
   fullName: "Admin",
   role: "admin",
+  accountId: ACCOUNT,
   active: true,
   propertyIds: [],
 };
@@ -65,6 +67,7 @@ async function seedProperty(id: string, name: string): Promise<void> {
     .collection("properties")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       name,
       nameLower: name.toLowerCase(),
       address: "Test address",
@@ -94,6 +97,7 @@ async function seedTenant(
     .collection("tenants")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       fullName,
       fullNameLower: fullName.toLowerCase(),
       phoneE164: phone,
@@ -108,8 +112,9 @@ async function seedTenant(
 
   await db()
     .collection("tenantPhones")
-    .doc(phone)
+    .doc(`${ACCOUNT}_${phone}`)
     .set({
+      accountId: ACCOUNT,
       tenantId: id,
       active: options.indexActive ?? true,
       createdAt: FieldValue.serverTimestamp(),
@@ -126,6 +131,7 @@ async function seedInvoice(
     .collection("invoices")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       tenantId,
       leaseId: `lease_${tenantId}`,
       unitId: `unit_${tenantId}`,
@@ -143,6 +149,17 @@ async function seedInvoice(
 }
 
 async function seedPortfolio(): Promise<void> {
+  await db()
+    .collection("accounts")
+    .doc(ACCOUNT)
+    .set({
+      name: "Demo Account",
+      nameLower: "demo account",
+      customerType: "agency",
+      status: "active",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
   await seedProperty("prop_1", "Kilimani Heights");
   await seedProperty("prop_2", "Westlands Court");
   await seedTenant("tnt_1");
@@ -175,6 +192,7 @@ async function count(collection: string): Promise<number> {
 }
 
 const ENV_KEYS = [
+  "BOMA_DEFAULT_ACCOUNT_ID",
   "MPESA_CONSUMER_KEY",
   "MPESA_CONSUMER_SECRET",
   "MPESA_SHORTCODE",
@@ -190,6 +208,7 @@ beforeEach(async () => {
   const firestore = db();
   await Promise.all(
     [
+      "accounts",
       "properties",
       "units",
       "tenants",
@@ -218,6 +237,7 @@ beforeEach(async () => {
     delete process.env[key];
   });
   process.env.MPESA_CALLBACK_SECRET = "test-callback-secret-96-characters-of-random";
+  process.env.BOMA_DEFAULT_ACCOUNT_ID = ACCOUNT;
 });
 
 afterAll(() => {
@@ -392,6 +412,7 @@ describe("handleStkCallback", () => {
   async function seedPending(options: { requestedBy?: string } = {}) {
     await seedPortfolio();
     await stkRequestDoc(checkoutRequestId).set({
+      accountId: ACCOUNT,
       checkoutRequestId,
       merchantRequestId: "29115-34620561-1",
       phoneE164: "+254712345678",
@@ -486,7 +507,7 @@ describe("handleStkCallback", () => {
 
   it("queues a receipt whose phone stopped matching", async () => {
     await seedPending();
-    await db().collection("tenantPhones").doc("+254712345678").update({ active: false });
+    await db().collection("tenantPhones").doc(`${ACCOUNT}_+254712345678`).update({ active: false });
 
     const outcome = await handleStkCallback(stkPayload(), null);
 

@@ -32,6 +32,7 @@ function actor(
     role,
     active: true,
     propertyIds,
+    accountId: "acc_demo",
   };
 }
 
@@ -67,6 +68,7 @@ async function seedUser(user: SessionUser): Promise<void> {
     .doc(user.uid)
     .set({
       uid: user.uid,
+      accountId: user.accountId,
       fullName: user.fullName,
       email: user.email,
       role: user.role,
@@ -85,6 +87,7 @@ async function seedProperty(
     .collection("properties")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       name: id,
       nameLower: id.toLowerCase(),
       address: "Test address",
@@ -106,6 +109,7 @@ async function seedLease(
     .collection("leases")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       tenantId,
       unitId: "unit_1",
       propertyId: "prop_1",
@@ -175,7 +179,7 @@ describe("createTenant", () => {
     expect(data?.notes).toBe("Works at the hospital");
 
     const phone = (
-      await db().collection("tenantPhones").doc("+254712345678").get()
+      await db().collection("tenantPhones").doc("acc_demo_+254712345678").get()
     ).data();
     expect(phone?.tenantId).toBe(id);
     expect(phone?.active).toBe(true);
@@ -193,7 +197,7 @@ describe("createTenant", () => {
     await createTenant(admin, createInput());
     await db()
       .collection("tenantPhones")
-      .doc("+254712345678")
+      .doc("acc_demo_+254712345678")
       .update({ active: false });
 
     await expect(
@@ -238,12 +242,12 @@ describe("updateTenant", () => {
     expect(data?.optedOutAt).toBeTruthy();
 
     const oldPhone = (
-      await db().collection("tenantPhones").doc("+254712345678").get()
+      await db().collection("tenantPhones").doc("acc_demo_+254712345678").get()
     ).data();
     expect(oldPhone?.active).toBe(false);
 
     const newPhone = (
-      await db().collection("tenantPhones").doc("+254700111222").get()
+      await db().collection("tenantPhones").doc("acc_demo_+254700111222").get()
     ).data();
     expect(newPhone?.tenantId).toBe(id);
     expect(newPhone?.active).toBe(true);

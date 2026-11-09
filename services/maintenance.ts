@@ -14,6 +14,7 @@ import {
   assertCapability,
   assertPropertyAccess,
   chunkIn,
+  requireAccount,
   scopePropertyIds,
 } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
@@ -64,11 +65,15 @@ function inScope(scope: string[] | null, propertyId: string): boolean {
 }
 
 function buildQuery(
+  accountId: string,
   scope: string[] | null,
   params: ListMaintenanceParams,
 ): { query: Query; scopeFallback: string[] | null } {
   const db = adminDb();
-  let query: Query = db.collection(COLLECTION).orderBy("createdAt", "desc");
+  let query: Query = db
+    .collection(COLLECTION)
+    .where("accountId", "==", accountId)
+    .orderBy("createdAt", "desc");
   let scopeFallback: string[] | null = null;
 
   if (params.propertyId) {
@@ -96,6 +101,7 @@ async function applyCursor(query: Query, cursor?: string): Promise<Query> {
 }
 
 async function unitsById(
+  accountId: string,
   ids: string[],
 ): Promise<Record<string, { unitNumber: string }>> {
   const unique = [...new Set(ids.filter(Boolean))];
@@ -107,6 +113,7 @@ async function unitsById(
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection("units")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -119,6 +126,7 @@ async function unitsById(
 }
 
 async function decorate(
+  accountId: string,
   docs: QueryDocumentSnapshot[],
 ): Promise<MaintenanceListItem[]> {
   if (docs.length === 0) return [];
@@ -129,9 +137,10 @@ async function decorate(
   }));
 
   const [propertyNames, units, staffNames] = await Promise.all([
-    getPropertyNames(rows.map((row) => row.data.propertyId)),
-    unitsById(rows.map((row) => row.data.unitId)),
+    getPropertyNames(accountId, rows.map((row) => row.data.propertyId)),
+    unitsById(accountId, rows.map((row) => row.data.unitId)),
     getStaffNames(
+      accountId,
       rows.flatMap((row) => [row.data.createdBy, row.data.assignedTo ?? ""]),
     ),
   ]);
@@ -166,6 +175,7 @@ export async function listMaintenance(
   params: ListMaintenanceParams = {},
 ): Promise<PageResult<MaintenanceListItem>> {
   assertCapability(actor, "update_maintenance");
+  const accountId = requireAccount(actor);
 
   const scope = scopePropertyIds(actor);
   if (params.propertyId) assertPropertyAccess(actor, params.propertyId);
@@ -177,11 +187,11 @@ export async function listMaintenance(
   const assignedTo = params.assignedTo?.trim() || undefined;
   const inMemory = Boolean(q || priority || assignedTo);
 
-  const { query: base, scopeFallback } = buildQuery(scope, params);
+  const { query: base, scopeFallback } = buildQuery(accountId, scope, params);
 
   if (inMemory) {
     const snapshot = await base.limit(SEARCH_LIMIT).get();
-    let rows = await decorate(snapshot.docs);
+    let rows = await decorate(accountId, snapshot.docs);
     if (scopeFallback) {
       rows = rows.filter((row) => inScope(scopeFallback, row.propertyId));
     }
@@ -208,7 +218,7 @@ export async function listMaintenance(
   const hasMore = docs.length > pageSize;
   if (hasMore) docs = docs.slice(0, pageSize);
 
-  let items = await decorate(docs);
+  let items = await decorate(accountId, docs);
   if (scopeFallback) {
     items = items.filter((row) => inScope(scopeFallback, row.propertyId));
   }
@@ -224,6 +234,7 @@ export async function getMaintenance(
   requestId: string,
 ): Promise<MaintenanceListItem> {
   assertCapability(actor, "update_maintenance");
+  const accountId = requireAccount(actor);
 
   const snapshot = await adminDb()
     .collection(COLLECTION)
@@ -234,9 +245,12 @@ export async function getMaintenance(
   }
 
   const request = snapshot.data() as MaintenanceRequest;
+  if (request.accountId !== accountId) {
+    throw new ServiceError("not_found", "Maintenance request not found.");
+  }
   assertPropertyAccess(actor, request.propertyId);
 
-  const [item] = await decorate([snapshot as QueryDocumentSnapshot]);
+  const [item] = await decorate(accountId, [snapshot as QueryDocumentSnapshot]);
   return item;
 }
 
@@ -246,6 +260,7 @@ export async function getMaintenance(
  */
 async function readAssignee(
   tx: Transaction,
+  accountId: string,
   propertyId: string,
   uid: string,
 ): Promise<{ uid: string; name: string }> {
@@ -257,11 +272,18 @@ async function readAssignee(
   }
 
   const data = snapshot.data() as {
+    accountId?: string;
     fullName?: string;
     role?: string;
     propertyIds?: string[];
     active?: boolean;
   };
+
+  if (data.accountId !== accountId) {
+    throw new ServiceError("validation", "The selected assignee no longer exists.", {
+      fieldErrors: { assignedTo: ["Choose an active staff member."] },
+    });
+  }
 
   if (
     !data.active ||
@@ -303,7 +325,11 @@ export async function createMaintenance(
     if (!propertySnapshot.exists) {
       throw new ServiceError("not_found", "Property not found.");
     }
-    if (!(propertySnapshot.data() as Property).active) {
+    const property = propertySnapshot.data() as Property;
+    if (property.accountId !== actor.accountId) {
+      throw new ServiceError("not_found", "Property not found.");
+    }
+    if (!property.active) {
       throw new ServiceError(
         "conflict",
         "This property is archived. Restore it before logging maintenance.",
@@ -315,6 +341,9 @@ export async function createMaintenance(
       throw new ServiceError("not_found", "Unit not found.");
     }
     const unit = unitSnapshot.data() as Unit;
+    if (unit.accountId !== actor.accountId) {
+      throw new ServiceError("not_found", "Unit not found.");
+    }
     if (unit.propertyId !== input.propertyId) {
       throw new ServiceError(
         "validation",
@@ -330,13 +359,14 @@ export async function createMaintenance(
     }
 
     const assignee = input.assignedTo
-      ? await readAssignee(tx, input.propertyId, input.assignedTo)
+      ? await readAssignee(tx, actor.accountId, input.propertyId, input.assignedTo)
       : null;
 
     // Assigning at creation is the same as assigning right afterwards.
     const status: MaintenanceStatus = assignee ? "assigned" : "open";
 
     tx.set(ref, {
+      accountId: actor.accountId,
       propertyId: input.propertyId,
       unitId: input.unitId,
       title: input.title,
@@ -352,6 +382,7 @@ export async function createMaintenance(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "maintenance.created",
@@ -421,7 +452,7 @@ export async function updateMaintenance(
     let assignee: { uid: string; name: string } | null = null;
     if (input.assignedTo) {
       assignee = assigneeChanged
-        ? await readAssignee(tx, request.propertyId, input.assignedTo)
+        ? await readAssignee(tx, actor.accountId, request.propertyId, input.assignedTo)
         : {
             uid: input.assignedTo,
             name: request.assignedToName ?? input.assignedTo,
@@ -485,6 +516,7 @@ export async function updateMaintenance(
     tx.update(ref, updates);
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "maintenance.updated",

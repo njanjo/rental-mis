@@ -24,6 +24,7 @@ import {
 } from "firebase-admin/firestore";
 
 import { writeAuditLog } from "@/lib/audit";
+import { defaultAccount } from "@/lib/accounts";
 import type { SessionUser } from "@/lib/auth/session";
 import { ServiceError } from "@/lib/errors";
 import { adminDb } from "@/lib/firebase/admin";
@@ -66,17 +67,37 @@ const PAYMENT_COLLECTION = "payments";
 /**
  * The webhook has no signed-in staff member, but downstream code (allocation,
  * audit, scope checks) speaks the `SessionUser` shape. Automation acts as a
- * scoped-out synthetic admin; the `system:` uid keeps every audit entry
- * self-explanatory and obviously apart from human work.
+ * scoped-to-its-account synthetic admin; the `system:` uid keeps every audit
+ * entry self-explanatory and obviously apart from human work.
+ *
+ * Ingestion routes payments into exactly one account (Decision D): the
+ * callback resolves `BOMA_DEFAULT_ACCOUNT_ID` before touching money and
+ * refuses to process anything when no account is configured.
  */
-export const MPESA_SYSTEM_ACTOR: SessionUser = {
-  uid: "system:mpesa",
-  email: "system@rentalmis.internal",
-  fullName: "M-Pesa callback",
-  role: "admin",
-  active: true,
-  propertyIds: [],
-};
+export function mpesaSystemActor(accountId: string): SessionUser {
+  if (!accountId) {
+    throw new ServiceError(
+      "internal",
+      "M-Pesa ingestion is not routed to any account. Set BOMA_DEFAULT_ACCOUNT_ID.",
+    );
+  }
+  return {
+    uid: "system:mpesa",
+    accountId,
+    email: "system@rentalmis.internal",
+    fullName: "M-Pesa callback",
+    role: "admin",
+    active: true,
+    propertyIds: [],
+  };
+}
+
+/** The account callbacks land in; null when ingestion routing is unconfigured. */
+async function ingestionAccount(): Promise<SessionUser | null> {
+  const account = await defaultAccount();
+  if (!account) return null;
+  return mpesaSystemActor(account.id);
+}
 
 export interface CallbackOutcome {
   /** `failed` maps to HTTP 5xx so Daraja retries; everything else is 200. */
@@ -97,6 +118,7 @@ function eventDocId(kind: ProviderEventKind, reference: string): string {
 
 /** Store the raw callback evidence with its processing state. */
 async function recordEvent(
+  accountId: string,
   kind: ProviderEventKind,
   reference: string,
   payload: unknown,
@@ -109,6 +131,7 @@ async function recordEvent(
       : (error instanceof Error ? error.message : String(error)).slice(0, 500);
 
   const fields: Record<string, unknown> = {
+    accountId,
     provider: "mpesa" as const,
     kind,
     eventId: reference,
@@ -126,6 +149,7 @@ async function recordEvent(
 
 function markEventProcessed(
   tx: Transaction,
+  accountId: string,
   kind: ProviderEventKind,
   reference: string,
   payload: unknown,
@@ -133,6 +157,7 @@ function markEventProcessed(
   tx.set(
     adminDb().collection(PROVIDER_EVENTS_COLLECTION).doc(eventDocId(kind, reference)),
     {
+      accountId,
       provider: "mpesa" as const,
       kind,
       eventId: reference,
@@ -156,11 +181,15 @@ type TenantResolution =
  */
 async function resolveTenant(
   tx: Transaction,
+  accountId: string,
   payerPhone: string,
 ): Promise<TenantResolution> {
   const db = adminDb();
 
-  const index = await tx.get(db.collection(PHONE_INDEX).doc(payerPhone));
+  // Decision E: the phone index id is `{accountId}_{phone}`.
+  const index = await tx.get(
+    db.collection(PHONE_INDEX).doc(`${accountId}_${payerPhone}`),
+  );
   if (!index.exists) return { status: "no_phone_index" };
 
   const entry = index.data() as { tenantId?: string; active?: boolean } | undefined;
@@ -178,6 +207,9 @@ async function resolveTenant(
     // The document id is authoritative; `id` is not stored as a field.
     id: tenantSnapshot.id,
   };
+  // A phone index entry pointing at another account's tenant must never
+  // resolve — treat it as absent.
+  if (tenant.accountId !== accountId) return { status: "no_phone_index" };
   if (tenant.status !== "active") return { status: "inactive", tenant };
 
   const propertyId = tenant.currentPropertyId ?? tenant.propertyIds?.[0];
@@ -239,8 +271,16 @@ export async function handleC2bValidation(
 ): Promise<CallbackOutcome> {
   const reference = c2bReference(payload);
   const paymentId = paymentIdForReference("mpesa", reference);
+  const account = await ingestionAccount();
 
   try {
+    // Nothing is recorded without an account to attribute it to.
+    if (!account) {
+      return {
+        result: "failed",
+        resultDesc: "Payment ingestion is not configured for any account.",
+      };
+    }
     const amountMinor = parseMpesaAmount(payload.TransAmount);
     const payerPhone = normaliseMsisdn(payload.MSISDN);
     if (amountMinor === null || amountMinor <= 0 || !payerPhone) {
@@ -255,7 +295,7 @@ export async function handleC2bValidation(
       .doc(paymentId)
       .get();
     if (exists.exists) {
-      await recordEvent("c2b_validation", reference, raw, "duplicate");
+      await recordEvent(account.accountId, "c2b_validation", reference, raw, "duplicate");
       return {
         result: "duplicate",
         resultDesc: "That receipt has already been recorded.",
@@ -265,7 +305,7 @@ export async function handleC2bValidation(
     // Validation evidence is advisory; confirmation is the receipt, so a
     // failure to store this event never cancels a tenant's rent.
     try {
-      await recordEvent("c2b_validation", reference, raw, "processed");
+      await recordEvent(account.accountId, "c2b_validation", reference, raw, "processed");
     } catch {
       // Ignore: nothing depends on validation events.
     }
@@ -294,6 +334,15 @@ export async function handleC2bConfirmation(
 ): Promise<CallbackOutcome> {
   const reference = c2bReference(payload);
   const db = adminDb();
+  // Money must land in exactly one account: resolve routing before the
+  // transaction opens, and refuse to process when none is configured.
+  const systemActor = await ingestionAccount();
+  if (!systemActor) {
+    return {
+      result: "failed",
+      resultDesc: "Payment ingestion is not configured for any account.",
+    };
+  }
   const eventRef = db
     .collection(PROVIDER_EVENTS_COLLECTION)
     .doc(eventDocId("c2b_confirmation", reference));
@@ -309,6 +358,7 @@ export async function handleC2bConfirmation(
       );
       if (existingPayment.exists) {
         tx.set(eventRef, {
+          accountId: systemActor.accountId,
           provider: "mpesa" as const,
           kind: "c2b_confirmation" satisfies ProviderEventKind,
           eventId: reference,
@@ -328,10 +378,20 @@ export async function handleC2bConfirmation(
         );
       }
 
-      const resolution = await resolveTenant(tx, payerPhone);
+      // Re-check routing inside the transaction so a config change cannot
+      // drift between read and write sides of the ledger.
+      const actor = await ingestionAccount();
+      if (!actor) {
+        throw new ServiceError(
+          "internal",
+          "Payment ingestion is not configured for any account.",
+        );
+      }
+
+      const resolution = await resolveTenant(tx, actor.accountId, payerPhone);
 
       if (resolution.status === "matched") {
-        const result = await confirmPaymentWithinTransaction(tx, MPESA_SYSTEM_ACTOR, {
+        const result = await confirmPaymentWithinTransaction(tx, actor, {
           provider: "mpesa" as const,
           providerTransactionId: reference,
           amountMinor,
@@ -342,7 +402,7 @@ export async function handleC2bConfirmation(
           payerPhone,
         });
 
-        markEventProcessed(tx, "c2b_confirmation", reference, raw);
+        markEventProcessed(tx, actor.accountId, "c2b_confirmation", reference, raw);
         return {
           result: "recorded",
           resultDesc: "Accepted",
@@ -350,7 +410,7 @@ export async function handleC2bConfirmation(
         };
       }
 
-      await queueUnmatchedWithinTransaction(tx, MPESA_SYSTEM_ACTOR, {
+      await queueUnmatchedWithinTransaction(tx, actor, {
         provider: "mpesa" as const,
         providerTransactionId: reference,
         amountMinor,
@@ -364,13 +424,20 @@ export async function handleC2bConfirmation(
         payerPhone,
       });
 
-      markEventProcessed(tx, "c2b_confirmation", reference, raw);
+      markEventProcessed(tx, actor.accountId, "c2b_confirmation", reference, raw);
       return { result: "queued", resultDesc: "Accepted — queued for review" };
     });
 
     return outcome;
   } catch (error) {
-    await recordEvent("c2b_confirmation", reference, raw, "failed", error);
+    await recordEvent(
+      systemActor.accountId,
+      "c2b_confirmation",
+      reference,
+      raw,
+      "failed",
+      error,
+    );
     return { result: "failed", resultDesc: "Unable to process receipt." };
   }
 }
@@ -402,12 +469,18 @@ export async function handleStkCallback(
       const requestRef = db.collection(STK_COLLECTION).doc(stkDocId(reference));
       const requestSnapshot = await tx.get(requestRef);
 
+      let eventAccountId = (await defaultAccount())?.id ?? "";
+      let request: MpesaStkRequest | undefined;
+
       if (requestSnapshot.exists) {
-        const request = requestSnapshot.data() as MpesaStkRequest;
+        request = requestSnapshot.data() as MpesaStkRequest;
+        // The prompt knows its own account; route the callback there.
+        eventAccountId = request.accountId;
         if (request.status !== "pending") {
           tx.set(
             db.collection(PROVIDER_EVENTS_COLLECTION).doc(eventDocId("stk_callback", reference)),
             {
+              accountId: eventAccountId,
               provider: "mpesa" as const,
               kind: "stk_callback" satisfies ProviderEventKind,
               eventId: reference,
@@ -422,7 +495,7 @@ export async function handleStkCallback(
         throw new ServiceError("internal", "Callback for an unknown STK prompt.");
       }
 
-      const request = requestSnapshot.data() as MpesaStkRequest;
+      const actor = mpesaSystemActor(eventAccountId);
 
       if (payload.ResultCode !== 0) {
         tx.update(requestRef, {
@@ -431,7 +504,7 @@ export async function handleStkCallback(
           resultDesc: payload.ResultDesc,
           updatedAt: FieldValue.serverTimestamp(),
         });
-        markEventProcessed(tx, "stk_callback", reference, raw);
+        markEventProcessed(tx, eventAccountId, "stk_callback", reference, raw);
         return { result: "recorded", resultDesc: "Prompt did not succeed." };
       }
 
@@ -448,12 +521,12 @@ export async function handleStkCallback(
       }
 
       const payerPhone = facts.payerPhone ?? request.phoneE164;
-      const resolution = await resolveTenant(tx, payerPhone);
+      const resolution = await resolveTenant(tx, eventAccountId, payerPhone);
 
       let recordedPaymentId = paymentIdForReference("mpesa", facts.receiptNumber);
 
       if (resolution.status === "matched") {
-        const result = await confirmPaymentWithinTransaction(tx, MPESA_SYSTEM_ACTOR, {
+        const result = await confirmPaymentWithinTransaction(tx, actor, {
           provider: "mpesa" as const,
           providerTransactionId: facts.receiptNumber,
           amountMinor: facts.amountMinor,
@@ -465,7 +538,7 @@ export async function handleStkCallback(
         });
         recordedPaymentId = result?.paymentId ?? recordedPaymentId;
       } else {
-        await queueUnmatchedWithinTransaction(tx, MPESA_SYSTEM_ACTOR, {
+        await queueUnmatchedWithinTransaction(tx, actor, {
           provider: "mpesa" as const,
           providerTransactionId: facts.receiptNumber,
           amountMinor: facts.amountMinor,
@@ -488,7 +561,7 @@ export async function handleStkCallback(
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-      markEventProcessed(tx, "stk_callback", reference, raw);
+      markEventProcessed(tx, eventAccountId, "stk_callback", reference, raw);
       return {
         result: matched ? "recorded" : "queued",
         resultDesc: matched ? "Accepted" : "Accepted — queued for review",
@@ -498,7 +571,20 @@ export async function handleStkCallback(
 
     return outcome;
   } catch (error) {
-    await recordEvent("stk_callback", reference, raw, "failed", error);
+    let eventAccountId = "";
+    try {
+      eventAccountId = (await defaultAccount())?.id ?? "";
+    } catch {
+      eventAccountId = "";
+    }
+    await recordEvent(
+      eventAccountId,
+      "stk_callback",
+      reference,
+      raw,
+      "failed",
+      error,
+    );
     return { result: "failed", resultDesc: "Unable to process prompt result." };
   }
 }
@@ -675,9 +761,17 @@ export async function initiateStkPush(
   const db = adminDb();
   const docId = stkDocId(body.CheckoutRequestID);
   const requestRef = db.collection(STK_COLLECTION).doc(docId);
+  const accountId = actor.accountId;
+  if (!accountId) {
+    throw new ServiceError(
+      "forbidden",
+      "Your session does not belong to an account. Sign in again.",
+    );
+  }
 
   await db.runTransaction(async (tx) => {
     tx.set(requestRef, {
+      accountId,
       checkoutRequestId: body.CheckoutRequestID,
       merchantRequestId: body.MerchantRequestID,
       phoneE164: input.phoneE164,
@@ -691,6 +785,7 @@ export async function initiateStkPush(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "mpesa.stk_requested",

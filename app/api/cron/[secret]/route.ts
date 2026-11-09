@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 
+import { listAccounts } from "@/lib/accounts";
 import { callbackSecretMatches } from "@/lib/mpesa";
 import {
   generateReminders,
   pollDeliveryReports,
   runOutboxWorker,
-  smsSystemActor,
 } from "@/services/sms";
 
 /**
@@ -15,6 +15,11 @@ import {
  *
  * Uses the same shared-secret-in-path pattern as the M-Pesa webhooks so the
  * route stays unguessable without config.
+ *
+ * Multi-tenant model: every job runs per active account. `drain` and `poll`
+ * loop accounts internally and return a combined outcome; `reminders` is
+ * invoked once per account here so each account's cadence and data boundary
+ * hold. One account failing never blocks the others.
  *
  * Job summary:
  * - drain: send queued SMS through Beam (retries with backoff, then dead-letter)
@@ -34,6 +39,12 @@ function parseJob(request: Request): Job {
     : "all";
 }
 
+function outcomeOf(promise: Promise<unknown>): Promise<unknown> {
+  return promise.catch((error: unknown) => ({
+    error: error instanceof Error ? error.message : String(error),
+  }));
+}
+
 export async function GET(
   request: Request,
   context: { params: Promise<{ secret: string }> },
@@ -49,22 +60,25 @@ export async function GET(
   const results: Record<string, unknown> = { job, startedAt: now.toISOString() };
 
   if (job === "all" || job === "drain") {
-    results.drain = await runOutboxWorker().catch((error: unknown) => ({
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    results.drain = await outcomeOf(runOutboxWorker());
   }
 
   if (job === "all" || job === "poll") {
-    results.poll = await pollDeliveryReports().catch((error: unknown) => ({
-      error: error instanceof Error ? error.message : String(error),
-    }));
+    results.poll = await outcomeOf(pollDeliveryReports());
   }
 
   if (job === "all" || job === "reminders") {
-    results.reminders = await generateReminders(smsSystemActor()).catch(
-      (error: unknown) => ({
-        error: error instanceof Error ? error.message : String(error),
-      }),
+    const accounts = await listAccounts("active");
+    results.accounts = accounts.length;
+    results.reminders = await outcomeOf(
+      Promise.all(
+        accounts.map(async (account) => ({
+          accountId: account.id,
+          outcome: await generateReminders(account.id).catch((error: unknown) => ({
+            error: error instanceof Error ? error.message : String(error),
+          })),
+        })),
+      ),
     );
   }
 

@@ -13,6 +13,7 @@ import {
   assertCapability,
   assertPropertyAccess,
   chunkIn,
+  requireAccount,
   scopePropertyIds,
 } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
@@ -46,11 +47,15 @@ function include(id: string, scope: string[] | null): boolean {
 }
 
 function buildQuery(
+  accountId: string,
   scope: string[] | null,
   status: "active" | "archived" | "all",
 ): Query {
   const db = adminDb();
-  let query: Query = db.collection(COLLECTION).orderBy("nameLower");
+  let query: Query = db
+    .collection(COLLECTION)
+    .where("accountId", "==", accountId)
+    .orderBy("nameLower");
 
   if (status !== "all") {
     query = query.where("active", "==", status === "active");
@@ -72,7 +77,10 @@ async function applyCursor(query: Query, cursor?: string): Promise<Query> {
   return query.startAfter(snapshot);
 }
 
-async function unitCounts(propertyIds: string[]): Promise<
+async function unitCounts(
+  accountId: string,
+  propertyIds: string[],
+): Promise<
   Record<string, { total: number; occupied: number }>
 > {
   const counts: Record<string, { total: number; occupied: number }> = {};
@@ -87,6 +95,7 @@ async function unitCounts(propertyIds: string[]): Promise<
   for (const chunk of chunks) {
     const snapshot = await db
       .collection("units")
+      .where("accountId", "==", accountId)
       .where("propertyId", "in", chunk)
       .where("active", "==", true)
       .get();
@@ -130,12 +139,13 @@ export async function listProperties(
   actor: SessionUser,
   params: ListPropertiesParams = {},
 ): Promise<PageResult<PropertyListItem>> {
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   const status = params.status ?? "active";
   const pageSize = clampPageSize(params.pageSize);
   const q = params.q?.trim().toLowerCase() ?? "";
 
-  let query = buildQuery(scope, status);
+  let query = buildQuery(accountId, scope, status);
 
   if (q) {
     // Text search is applied over a bounded page rather than a full scan.
@@ -152,7 +162,7 @@ export async function listProperties(
     });
 
     return {
-      items: await decorate(docs),
+      items: await decorate(accountId, docs),
       nextCursor: null,
     };
   }
@@ -172,23 +182,27 @@ export async function listProperties(
   }
 
   return {
-    items: await decorate(docs),
+    items: await decorate(accountId, docs),
     nextCursor: hasMore ? docs[docs.length - 1]?.id ?? null : null,
   };
 }
 
-async function decorate(docs: QueryDocumentSnapshot[]): Promise<PropertyListItem[]> {
+async function decorate(
+  accountId: string,
+  docs: QueryDocumentSnapshot[],
+): Promise<PropertyListItem[]> {
   if (docs.length === 0) return [];
 
-  const counts = await unitCounts(docs.map((doc) => doc.id));
+  const counts = await unitCounts(accountId, docs.map((doc) => doc.id));
   const managerIds = docs.flatMap((doc) => (doc.data().managerIds as string[]) ?? []);
-  const managerNames = await getStaffNames(managerIds);
+  const managerNames = await getStaffNames(accountId, managerIds);
 
   return docs.map((doc) => toView(doc, counts, managerNames));
 }
 
 /** Map of property id -> name, for denormalised list rows. */
 export async function getPropertyNames(
+  accountId: string,
   ids: string[],
 ): Promise<Record<string, string>> {
   const unique = [...new Set(ids.filter(Boolean))];
@@ -200,6 +214,7 @@ export async function getPropertyNames(
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection(COLLECTION)
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -220,16 +235,24 @@ export async function getProperty(
   if (!snapshot.exists) {
     throw new ServiceError("not_found", "Property not found.");
   }
+  const property = snapshot.data() as Property;
+  if (property.accountId !== actor.accountId) {
+    throw new ServiceError("not_found", "Property not found.");
+  }
 
-  const [item] = await decorate([snapshot as unknown as QueryDocumentSnapshot]);
+  const [item] = await decorate(
+    actor.accountId,
+    [snapshot as unknown as QueryDocumentSnapshot],
+  );
   return item;
 }
 
 export async function getPropertyOptions(
   actor: SessionUser,
 ): Promise<PropertyOption[]> {
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
-  const snapshot = await buildQuery(scope, "active").limit(200).get();
+  const snapshot = await buildQuery(accountId, scope, "active").limit(200).get();
 
   return snapshot.docs
     .filter((doc) => include(doc.id, scope))
@@ -240,11 +263,14 @@ export async function getPropertyOptions(
     }));
 }
 
-async function assertManagersExist(managerIds: string[]): Promise<string[]> {
+async function assertManagersExist(
+  accountId: string,
+  managerIds: string[],
+): Promise<string[]> {
   const unique = [...new Set(managerIds.filter(Boolean))];
   if (unique.length === 0) return [];
 
-  const names = await getStaffNames(unique);
+  const names = await getStaffNames(accountId, unique);
   const missing = unique.filter((uid) => !names[uid]);
   if (missing.length > 0) {
     throw new ServiceError("validation", "One or more selected managers do not exist.", {
@@ -294,7 +320,7 @@ export async function createProperty(
   // creating a property becomes its manager.
   const managerIds =
     actor.role === "admin"
-      ? await assertManagersExist(input.managerIds)
+      ? await assertManagersExist(actor.accountId, input.managerIds)
       : [actor.uid];
 
   const db = adminDb();
@@ -307,6 +333,7 @@ export async function createProperty(
     );
 
     tx.set(ref, {
+      accountId: actor.accountId,
       name: input.name,
       nameLower: input.name.toLowerCase(),
       address: input.address,
@@ -328,6 +355,7 @@ export async function createProperty(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "property.created",
@@ -357,7 +385,7 @@ export async function updateProperty(
   const ref = db.collection(COLLECTION).doc(propertyId);
 
   const managerIds =
-    actor.role === "admin" ? await assertManagersExist(input.managerIds) : undefined;
+    actor.role === "admin" ? await assertManagersExist(actor.accountId, input.managerIds) : undefined;
 
   await db.runTransaction(async (tx) => {
     const snapshot = await tx.get(ref);
@@ -366,6 +394,9 @@ export async function updateProperty(
     }
 
     const before = snapshot.data() as Property;
+    if (before.accountId !== actor.accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this property.");
+    }
     const nextManagers = managerIds ?? before.managerIds ?? [];
     const affectedManagers = [
       ...new Set([...(before.managerIds ?? []), ...nextManagers]),
@@ -401,6 +432,7 @@ export async function updateProperty(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "property.updated",
@@ -440,6 +472,9 @@ export async function archiveProperty(
     }
 
     const property = snapshot.data() as Property;
+    if (property.accountId !== actor.accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this property.");
+    }
     if (!property.active) {
       throw new ServiceError("conflict", "This property is already archived.");
     }
@@ -465,6 +500,7 @@ export async function archiveProperty(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "property.archived",
@@ -493,6 +529,9 @@ export async function restoreProperty(
     if (!snapshot.exists) {
       throw new ServiceError("not_found", "Property not found.");
     }
+    if (snapshot.data()?.accountId !== actor.accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this property.");
+    }
     if (snapshot.data()?.active) {
       throw new ServiceError("conflict", "This property is already active.");
     }
@@ -504,6 +543,7 @@ export async function restoreProperty(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "property.restored",

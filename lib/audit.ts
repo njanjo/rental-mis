@@ -6,6 +6,8 @@ import { adminDb } from "@/lib/firebase/admin";
 import type { Role } from "@/lib/types";
 
 export interface AuditEntry {
+  /** Account the change belongs to. Required — every audit row is scoped. */
+  accountId: string;
   actorUid: string;
   actorRole: Role;
   /** Verb in past tense, e.g. "property.created" or "lease.terminated". */
@@ -44,6 +46,7 @@ export function writeAuditLog(tx: Transaction, entry: AuditEntry): void {
 
   // Firestore rejects `undefined` at any depth, including top-level fields.
   const payload: Record<string, unknown> = {
+    accountId: entry.accountId,
     actorUid: entry.actorUid,
     actorRole: entry.actorRole,
     action: entry.action,

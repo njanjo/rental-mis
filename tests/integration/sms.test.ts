@@ -1,7 +1,6 @@
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { SessionUser } from "@/lib/auth/session";
 import { adminDb } from "@/lib/firebase/admin";
 import type { EnqueueSmsInput } from "@/services/sms";
 import {
@@ -14,15 +13,7 @@ import {
 } from "@/services/sms";
 
 const db = () => adminDb();
-
-const staff: SessionUser = {
-  uid: "uid_admin",
-  email: "admin@rentalmis.test",
-  fullName: "Admin",
-  role: "admin",
-  active: true,
-  propertyIds: [],
-};
+const ACCOUNT = "acc_demo";
 
 const ENV_KEYS = [
   "BEAM_SMS_API_KEY",
@@ -35,6 +26,7 @@ const envBackup = new Map<string, string | undefined>();
 
 function sampleInput(overrides: Partial<EnqueueSmsInput> = {}): EnqueueSmsInput {
   return {
+    accountId: ACCOUNT,
     phoneE164: "+254712345678",
     templateKey: "payment_receipt",
     reference: "RKT7DMQ6K8",
@@ -55,6 +47,7 @@ async function seedTenant(options: {
     .collection("tenants")
     .doc("tnt_1")
     .set({
+      accountId: ACCOUNT,
       fullName: "Grace Wanjiru",
       fullNameLower: "grace wanjiru",
       phoneE164: "+254712345678",
@@ -71,6 +64,7 @@ async function seedTenant(options: {
 async function seedInvoice(dueDateIso: string): Promise<string> {
   const ref = db().collection("invoices").doc("inv_1");
   await ref.set({
+    accountId: ACCOUNT,
     tenantId: "tnt_1",
     leaseId: "lease_1",
     unitId: "unit_1",
@@ -121,6 +115,7 @@ beforeEach(async () => {
   const firestore = db();
   await Promise.all(
     [
+      "accounts",
       "smsOutbox",
       "smsLogs",
       "tenants",
@@ -141,6 +136,15 @@ beforeEach(async () => {
 
   ENV_KEYS.forEach((key) => envBackup.set(key, process.env[key]));
   ENV_KEYS.forEach((key) => delete process.env[key]);
+
+  await firestore.collection("accounts").doc(ACCOUNT).set({
+    name: "Demo Account",
+    nameLower: "demo account",
+    customerType: "agency",
+    status: "active",
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 });
 
 afterAll(() => {
@@ -289,7 +293,7 @@ describe("generateReminders", () => {
     const due = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
     await seedInvoice(due);
 
-    const first = await generateReminders(staff);
+    const first = await generateReminders(ACCOUNT);
     expect(first.dueSoon).toBe(1);
 
     const items = await db().collection("smsOutbox").get();
@@ -298,7 +302,7 @@ describe("generateReminders", () => {
     expect(items.docs[0].data().body).not.toContain("{{");
 
     // A second run must not repeat the same notice.
-    const second = await generateReminders(staff);
+    const second = await generateReminders(ACCOUNT);
     expect(second.dueSoon).toBe(0);
     expect(second.skipped).toBe(1);
   });
@@ -309,7 +313,7 @@ describe("generateReminders", () => {
     const due = new Date(Date.now() - 14 * 86_400_000).toISOString().slice(0, 10);
     await seedInvoice(due);
 
-    const outcome = await generateReminders(staff);
+    const outcome = await generateReminders(ACCOUNT);
     expect(outcome.overdue).toBe(1);
 
     const items = await db().collection("smsOutbox").get();
@@ -321,7 +325,7 @@ describe("generateReminders", () => {
     const due = new Date(Date.now() + 2 * 86_400_000).toISOString().slice(0, 10);
     await seedInvoice(due);
 
-    const outcome = await generateReminders(staff);
+    const outcome = await generateReminders(ACCOUNT);
 
     expect(outcome).toEqual({ dueSoon: 0, overdue: 0, skipped: 1 });
     expect(await db().collection("smsOutbox").get()).toHaveProperty("empty", true);
@@ -333,6 +337,7 @@ describe("generateReminders", () => {
       .collection("invoices")
       .doc("inv_1")
       .set({
+        accountId: ACCOUNT,
         tenantId: "tnt_1",
         leaseId: "lease_1",
         unitId: "unit_1",
@@ -350,7 +355,7 @@ describe("generateReminders", () => {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-    const outcome = await generateReminders(staff);
+    const outcome = await generateReminders(ACCOUNT);
     expect(outcome).toEqual({ dueSoon: 0, overdue: 0, skipped: 0 });
     expect(await db().collection("smsOutbox").get()).toHaveProperty("empty", true);
   });

@@ -13,6 +13,8 @@ export { SESSION_COOKIE, SESSION_MAX_AGE_SECONDS } from "@/lib/auth/constants";
 
 export interface SessionUser {
   uid: string;
+  /** Account (customer) this session operates in. */
+  accountId: string;
   email: string;
   fullName: string;
   role: Role;
@@ -51,9 +53,19 @@ export async function getSessionUser(): Promise<SessionUser | null> {
 
     const profile = snapshot.data() as UserProfile;
     if (!profile.active) return null;
+    // A profile without an account is a migration defect, not a valid
+    // session — refuse it rather than leaking accountless queries.
+    if (!profile.accountId) {
+      console.warn(
+        "[auth/session] profile has no accountId:",
+        decoded.uid,
+      );
+      return null;
+    }
 
     return {
       uid: decoded.uid,
+      accountId: profile.accountId,
       email: profile.email ?? decoded.email ?? "",
       fullName: profile.fullName ?? decoded.name ?? "",
       role: profile.role,

@@ -50,6 +50,14 @@ export async function GET() {
     adminDb();
     report.adminInit = "ok";
     report.projectId = adminApp().options.projectId ?? null;
+
+    // Cheap tenant-count diagnostic: which customer roots are provisioned.
+    try {
+      const count = await adminDb().collection("accounts").count().get();
+      report.accounts = count.data().count;
+    } catch {
+      report.accounts = "unavailable";
+    }
   } catch (error) {
     return NextResponse.json(
       {

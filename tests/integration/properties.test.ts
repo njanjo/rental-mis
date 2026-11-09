@@ -24,6 +24,7 @@ function actor(role: Role, propertyIds: string[] = [], uid = `uid_${role}`): Ses
     email: `${uid}@rentalmis.test`,
     fullName: uid,
     role,
+    accountId: "acc_demo",
     active: true,
     propertyIds,
   };
@@ -53,6 +54,7 @@ async function seedUser(user: SessionUser): Promise<void> {
       fullName: user.fullName,
       email: user.email,
       role: user.role,
+      accountId: "acc_demo",
       propertyIds: user.propertyIds,
       active: true,
       createdAt: FieldValue.serverTimestamp(),
@@ -73,6 +75,7 @@ async function activeLease(propertyId: string): Promise<void> {
     .collection("leases")
     .doc(`lease_${propertyId}`)
     .set({
+      accountId: "acc_demo",
       tenantId: "tnt_1",
       unitId: "unit_1",
       propertyId,
@@ -295,18 +298,21 @@ describe("property queries", () => {
     await createProperty(admin, input({ name: "Nyali Beach Court", county: "Mombasa" }));
 
     await db().collection("units").doc("unit_1").set({
+      accountId: "acc_demo",
       propertyId: id,
       unitNumber: "A1",
       active: true,
       status: "occupied",
     });
     await db().collection("units").doc("unit_2").set({
+      accountId: "acc_demo",
       propertyId: id,
       unitNumber: "A2",
       active: true,
       status: "vacant",
     });
     await db().collection("units").doc("unit_3").set({
+      accountId: "acc_demo",
       propertyId: id,
       unitNumber: "A3",
       active: false,

@@ -29,6 +29,7 @@ function actor(
     email: `${uid}@rentalmis.test`,
     fullName: uid,
     role,
+    accountId: "acc_demo",
     active: true,
     propertyIds,
   };
@@ -59,6 +60,7 @@ async function seedUser(user: SessionUser): Promise<void> {
       fullName: user.fullName,
       email: user.email,
       role: user.role,
+      accountId: "acc_demo",
       propertyIds: user.propertyIds,
       active: true,
       createdAt: FieldValue.serverTimestamp(),
@@ -74,6 +76,7 @@ async function seedProperty(
     .collection("properties")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       name: id,
       nameLower: id.toLowerCase(),
       address: "Test address",
@@ -92,6 +95,7 @@ async function seedTenant(id: string, fullName: string): Promise<void> {
     .collection("tenants")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       fullName,
       fullNameLower: fullName.toLowerCase(),
       phoneE164: `+2547${digits}`,
@@ -112,6 +116,7 @@ async function seedLease(
     .collection("leases")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       tenantId: "tnt_1",
       unitId: "unit_1",
       propertyId: "prop_1",

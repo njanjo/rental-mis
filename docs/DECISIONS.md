@@ -229,6 +229,54 @@ Anything not listed here follows the spec as written.
   `firebase-admin` (through `jwks-rsa`) on CommonJS runtimes such as the
   Netlify Node sandbox.
 
+## Phase 1 (BOMA Cloud) — multi-tenant account scoping
+
+Phase 1 of the BOMA Cloud adoption roadmap makes every document belong to
+exactly one customer account. It is **behaviour-preserving**: no new features,
+no UI changes, no role changes — the existing customer simply becomes
+`acc_demo`.
+
+- **Decision A — flat collections + `accountId`.** Collections stay top-level;
+  every data document gains an `accountId` field. Path-based subcollections
+  were rejected because they would rewrite every URL-reference and rule match.
+  Every service query leads with `.where("accountId", "==", accountId)` before
+  its existing filters; every write sets the field explicitly.
+- **Decision B — one account per login.** Firebase Auth uids and the flat
+  `users` docs are unchanged apart from `accountId`. `SessionUser` carries
+  `accountId`, loaded from the profile by `getSessionUser()`; a profile with no
+  account id is treated as an invalid session, and `requireAccount(user)` is
+  the server-side gate every service uses.
+- **Decision C — one seeded account + idempotent backfill.**
+  `scripts/migrate-to-accounts.ts` attributes every existing document to one
+  account: it skips docs already carrying the target id, reports (and leaves
+  alone) docs carrying a different one, then verifies a clean pass before
+  setting `legacyMigrated: true`. Run it with `--dry-run` first; writes require
+  `--confirm`. Deploy order is backfill → app/rules, because old code ignores
+  the new field during the window.
+- **Decision D — M-Pesa routing via one default account.** Callbacks carry no
+  account context in Phase 1, so they resolve `BOMA_DEFAULT_ACCOUNT_ID`
+  (`lib/accounts.ts` `defaultAccountId()`/`defaultAccount()`). Phase 5 replaces
+  this with the `paymentRoutes` collection. The env var must name an
+  `accounts/{id}` document.
+- **Decision E — `tenantPhones` ids are `{accountId}_{phone}`.** The phone
+  index was keyed by bare E.164; two accounts sharing a payer number would
+  collide. The composite id is internal only (no UI), and the migration
+  rewrites legacy ids.
+- **Decision F — one `systemSettings/{accountId}` doc per account.** The old
+  `billing`/`reminders`/`sms` docs fold into sections (`billing`, `reminders`,
+  `templates`) on a doc whose id is the account id. `getSystemSettings()` in
+  `lib/accounts.ts` returns safe defaults when the doc is absent, so a fresh
+  account boots without seeded settings.
+- **Decision G — deterministic ids unchanged.** Invoice
+  `{leaseId}_{YYYY-MM}`, payment `pay_<sha256>` and allocation
+  `{paymentId}_{invoiceId}` keep their shapes; `accountId` is added beside
+  them. They remain globally unique as long as lease/payment ids are, so no
+  URL or idempotency key changes.
+- **Rules gate account membership.** Client reads additionally require
+  `profile().accountId` to match the document's `accountId` and are denied when
+  the profile has none. The Admin SDK still enforces capability + property +
+  account checks itself; rules remain the boundary for direct client access.
+
 ## Phase 8 — OTP two-factor login (REVERTED)
 
 The OTP second factor was removed: staff sign in with **email + password

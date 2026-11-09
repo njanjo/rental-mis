@@ -22,6 +22,7 @@ import {
 } from "firebase-admin/firestore";
 
 import { writeAuditLog } from "@/lib/audit";
+import { getSystemSettings, listAccounts } from "@/lib/accounts";
 import type { SessionUser } from "@/lib/auth/session";
 import { toDateInput, toIsoString } from "@/lib/dates";
 import { ServiceError } from "@/lib/errors";
@@ -41,14 +42,12 @@ import type {
   SmsOutboxItem,
   SmsStatus,
   SmsTemplateKey,
-  SystemSettings,
   Tenant,
 } from "@/lib/types";
 
 const OUTBOX = "smsOutbox";
 const SMS_LOGS = "smsLogs";
 const TENANTS = "tenants";
-const SETTINGS = "systemSettings";
 const INVOICES = "invoices";
 
 /** One worker pass sends at most this many messages; cron re-runs drain more. */
@@ -91,6 +90,8 @@ export function assertBeamConfig(): {
 // ---------------------------------------------------------------------------
 
 export interface EnqueueSmsInput {
+  /** Owning account; every message is scoped and routed per account. */
+  accountId: string;
   phoneE164: string;
   templateKey: SmsTemplateKey;
   reference: string;
@@ -106,6 +107,12 @@ export interface EnqueueSmsInput {
 export function buildOutboxDoc(
   input: EnqueueSmsInput,
 ): WithFieldValue<Omit<SmsOutboxItem, "id">> {
+  if (!input.accountId) {
+    throw new ServiceError(
+      "internal",
+      "A message cannot be queued without an account to route it to.",
+    );
+  }
   // lease_expiry / bulk_announcement templates are not defined yet.
   const templates = DEFAULT_SMS_TEMPLATES as Partial<
     Record<SmsTemplateKey, string>
@@ -120,6 +127,7 @@ export function buildOutboxDoc(
 
   const variables = defaultSmsVariables(input.templateKey, input);
   return {
+    accountId: input.accountId,
     phoneE164: input.phoneE164,
     templateKey: input.templateKey,
     variables,
@@ -176,6 +184,7 @@ export async function enqueueReminderIfNew(
 // ---------------------------------------------------------------------------
 
 function logRow(
+  accountId: string,
   outboxId: string,
   status: SmsStatus,
   extras: {
@@ -184,6 +193,7 @@ function logRow(
   } = {},
 ): Record<string, unknown> {
   return {
+    accountId,
     outboxId,
     provider: "beam" as const,
     status,
@@ -203,7 +213,9 @@ async function markAttempt(
 ): Promise<void> {
   const db = adminDb();
   const ref = db.collection(OUTBOX).doc(snapshot.id);
-  const attempts = ((snapshot.data() as SmsOutboxItem).attempts ?? 0) + 1;
+  const item = snapshot.data() as SmsOutboxItem;
+  const logAccountId = item.accountId;
+  const attempts = (item.attempts ?? 0) + 1;
 
   if (result.kind === "sent") {
     // Accepted by Beam even when the reply made no uid available; delivery
@@ -220,7 +232,7 @@ async function markAttempt(
       });
       tx.create(
         db.collection(SMS_LOGS).doc(),
-        logRow(snapshot.id, "sent", {
+        logRow(logAccountId, snapshot.id, "sent", {
           providerMessageId: result.messageId,
         }),
       );
@@ -246,7 +258,7 @@ async function markAttempt(
     .collection(SMS_LOGS)
     .doc()
     .create(
-      logRow(snapshot.id, "failed", { errorMessage: result.errorMessage }),
+      logRow(logAccountId, snapshot.id, "failed", { errorMessage: result.errorMessage }),
     );
 }
 
@@ -295,9 +307,22 @@ async function sendOne(
   }
 }
 
-export function smsSystemActor(role: Role = "admin"): SessionUser {
+/**
+ * The unattended worker has no signed-in staff member, but audit (and any
+ * scope-speaking callee) needs the `SessionUser` shape. Automation acts
+ * per-account; the `system:` uid keeps every audit entry self-explanatory and
+ * apart from human work.
+ */
+export function smsSystemActor(accountId: string, role: Role = "admin"): SessionUser {
+  if (!accountId) {
+    throw new ServiceError(
+      "internal",
+      "SMS automation runs per account — no account was provided.",
+    );
+  }
   return {
     uid: "system:sms",
+    accountId,
     email: "system@rentalmis.internal",
     fullName: "SMS automation",
     role,
@@ -306,91 +331,121 @@ export function smsSystemActor(role: Role = "admin"): SessionUser {
   };
 }
 
+/** Every account that may own queued messages; used by unattended jobs. */
+async function workerAccounts(): Promise<SessionUser[]> {
+  const accounts = await listAccounts("active");
+  return accounts
+    .filter((account) => Boolean(account.id))
+    .map((account) => smsSystemActor(account.id));
+}
+
 /**
- * Drain the outbox: send every queued/failed message whose backoff has
- * elapsed, oldest attempt first. `fetchImpl` is injectable so tests never
- * touch the network. Unconfigured Beam throws — the cron route answers 503.
+ * Drain the outbox: for each account, send every queued/failed message whose
+ * backoff has elapsed, oldest attempt first. `fetchImpl` is injectable so
+ * tests never touch the network. Unconfigured Beam throws — the cron route
+ * answers 503.
  */
 export async function runOutboxWorker(
   fetchImpl: typeof fetch = fetch,
 ): Promise<SendOutcome> {
   const db = adminDb();
-  let config: { baseUrl: string; token: string; senderId: string } | null = null;
+  const actors = await workerAccounts();
+  const outcome: SendOutcome = { sent: 0, retried: 0, dead: 0 };
+
   try {
-    config = assertBeamConfig();
+    const config = assertBeamConfig();
+    for (const actor of actors) {
+      const snapshot = await db
+        .collection(OUTBOX)
+        .where("accountId", "==", actor.accountId)
+        .where("status", "in", ["queued", "failed"])
+        .where("nextAttemptAt", "<=", Timestamp.now())
+        .orderBy("nextAttemptAt")
+        .limit(SEND_BATCH)
+        .get();
+
+      await Promise.all(
+        snapshot.docs.map(async (docSnap) => {
+          const result = await sendOne(docSnap, config, fetchImpl);
+          outcome[result] += 1;
+        }),
+      );
+
+      if (snapshot.size > 0) {
+        await db.runTransaction(async (tx) => {
+          writeAuditLog(tx, {
+            accountId: actor.accountId,
+            actorUid: actor.uid,
+            actorRole: actor.role,
+            action: "sms.worker_ran",
+            entityType: "smsOutbox",
+            entityId: "batch",
+            after: { ...outcome, scanned: snapshot.size },
+          });
+        });
+      }
+    }
+    return outcome;
   } catch (cause) {
     const env = process.env.NODE_ENV;
     if (env === "production" || env === "test") {
       throw cause;
     }
-    if (process.env.NODE_ENV === "test") {
-      throw cause;
-    }
-    // Dev mode without Beam config: mark queued messages as sent so reminders flow.
-    const snapshot = await db
-      .collection(OUTBOX)
-      .where("status", "in", ["queued", "failed"])
-      .where("nextAttemptAt", "<=", Timestamp.now())
-      .orderBy("nextAttemptAt")
-      .limit(SEND_BATCH)
-      .get();
 
-    const outcome: SendOutcome = { sent: 0, retried: 0, dead: 0 };
-    await Promise.all(
-      snapshot.docs.map(async (docSnap) => {
-        const item = docSnap.data() as SmsOutboxItem;
-        console.log(`[DEV SMS] To ${item.phoneE164}: ${item.body}`);
-        await db.runTransaction(async (tx) => {
-          const ref = db.collection(OUTBOX).doc(docSnap.id);
-          tx.update(ref, {
-            status: "sent",
-            attempts: (item.attempts ?? 0) + 1,
-            lastError: FieldValue.delete(),
-            updatedAt: FieldValue.serverTimestamp(),
+    // Dev mode without Beam config: mark queued messages as sent so
+    // reminders flow, per account.
+    for (const actor of actors) {
+      const snapshot = await db
+        .collection(OUTBOX)
+        .where("accountId", "==", actor.accountId)
+        .where("status", "in", ["queued", "failed"])
+        .where("nextAttemptAt", "<=", Timestamp.now())
+        .orderBy("nextAttemptAt")
+        .limit(SEND_BATCH)
+        .get();
+
+      await Promise.all(
+        snapshot.docs.map(async (docSnap) => {
+          const item = docSnap.data() as SmsOutboxItem;
+          console.log(`[DEV SMS] To ${item.phoneE164}: ${item.body}`);
+          await db.runTransaction(async (tx) => {
+            const ref = db.collection(OUTBOX).doc(docSnap.id);
+            tx.update(ref, {
+              status: "sent",
+              attempts: (item.attempts ?? 0) + 1,
+              lastError: FieldValue.delete(),
+              updatedAt: FieldValue.serverTimestamp(),
+            });
+            tx.create(
+              db.collection(SMS_LOGS).doc(),
+              logRow(actor.accountId, docSnap.id, "sent"),
+            );
           });
-          tx.create(db.collection(SMS_LOGS).doc(), logRow(docSnap.id, "sent"));
+          outcome.sent += 1;
+        }),
+      );
+
+      if (snapshot.size > 0) {
+        await db.runTransaction(async (tx) => {
+          writeAuditLog(tx, {
+            accountId: actor.accountId,
+            actorUid: actor.uid,
+            actorRole: actor.role,
+            action: "sms.worker_ran",
+            entityType: "smsOutbox",
+            entityId: "batch",
+            after: {
+              sent: outcome.sent,
+              retried: outcome.retried,
+              dead: outcome.dead,
+              scanned: snapshot.size,
+            },
+          });
         });
-        outcome.sent += 1;
-      }),
-    );
+      }
+    }
     return outcome;
   }
-
-  if (!config) {
-    throw new Error("SMS configuration missing");
-  }
-
-  const snapshot = await db
-    .collection(OUTBOX)
-    .where("status", "in", ["queued", "failed"])
-    .where("nextAttemptAt", "<=", Timestamp.now())
-    .orderBy("nextAttemptAt")
-    .limit(SEND_BATCH)
-    .get();
-
-  const outcome: SendOutcome = { sent: 0, retried: 0, dead: 0 };
-
-  await Promise.all(
-    snapshot.docs.map(async (docSnap) => {
-      const result = await sendOne(docSnap, config!, fetchImpl);
-      outcome[result] += 1;
-    }),
-  );
-
-  if (snapshot.size > 0) {
-    await db.runTransaction(async (tx) => {
-      writeAuditLog(tx, {
-        actorUid: "system:sms",
-        actorRole: "admin",
-        action: "sms.worker_ran",
-        entityType: "smsOutbox",
-        entityId: "batch",
-        after: { ...outcome, scanned: snapshot.size },
-      });
-    });
-  }
-
-  return outcome;
 }
 
 // ---------------------------------------------------------------------------
@@ -414,18 +469,37 @@ export async function pollDeliveryReports(
   const config = assertBeamConfig();
   const db = adminDb();
 
-  const sent = await db
-    .collection(OUTBOX)
-    .where("status", "==", "sent")
-    .orderBy("updatedAt", "desc")
-    .limit(100)
-    .get();
+  const outcome: PollOutcome = { checkable: 0, delivered: 0, failed: 0 };
 
-  const ids = sent.docs
-    .map((doc) => (doc.data() as SmsOutboxItem).providerMessageId)
+  // Delivery status is polled per account; Beam pacing keeps a single global
+  // list endpoint, so one fetch is shared across accounts.
+  const actors = await workerAccounts();
+  const sent = (
+    await Promise.all(
+      actors.map((actor) =>
+        db
+          .collection(OUTBOX)
+          .where("accountId", "==", actor.accountId)
+          .where("status", "==", "sent")
+          .orderBy("updatedAt", "desc")
+          .limit(100)
+          .get()
+          .then((snapshot) =>
+            snapshot.docs.map((doc) => ({
+              id: doc.id,
+              item: doc.data() as SmsOutboxItem,
+              accountId: actor.accountId,
+            })),
+          ),
+      ),
+    )
+  ).flat();
+
+  const ids = sent
+    .map(({ item }) => item.providerMessageId)
     .filter((id): id is string => Boolean(id));
 
-  const outcome: PollOutcome = { checkable: ids.length, delivered: 0, failed: 0 };
+  outcome.checkable = ids.length;
   if (ids.length === 0) return outcome;
 
   const response = await fetchImpl(`${config.baseUrl}/sms`, {
@@ -441,8 +515,7 @@ export async function pollDeliveryReports(
   const byUid = new Map(reports.map((report) => [report.uid, report]));
 
   await Promise.all(
-    sent.docs.map(async (doc) => {
-      const item = doc.data() as SmsOutboxItem;
+    sent.map(async ({ id, item, accountId }) => {
       if (!item.providerMessageId) return;
 
       const report = byUid.get(item.providerMessageId);
@@ -451,13 +524,13 @@ export async function pollDeliveryReports(
       outcome[report.status === "delivered" ? "delivered" : "failed"] += 1;
 
       await db.runTransaction(async (tx) => {
-        tx.update(db.collection(OUTBOX).doc(doc.id), {
+        tx.update(db.collection(OUTBOX).doc(id), {
           status: report.status,
           updatedAt: FieldValue.serverTimestamp(),
         });
         tx.create(
           db.collection(SMS_LOGS).doc(),
-          logRow(doc.id, report.status as SmsStatus),
+          logRow(accountId, id, report.status as SmsStatus),
         );
       });
     }),
@@ -484,10 +557,14 @@ export interface SmsOutboxListItem {
 }
 
 /** Recent outbox rows for the SMS dashboard, newest first. */
-export async function listSmsOutbox(limit = 50): Promise<SmsOutboxListItem[]> {
+export async function listSmsOutbox(
+  actor: SessionUser,
+  limit = 50,
+): Promise<SmsOutboxListItem[]> {
   const db = adminDb();
   const snapshot = await db
     .collection(OUTBOX)
+    .where("accountId", "==", actor.accountId)
     .orderBy("updatedAt", "desc")
     .limit(limit)
     .get();
@@ -521,16 +598,14 @@ export interface ReminderOutcome {
   skipped: number;
 }
 
-async function loadReminderCadence(): Promise<{
+async function loadReminderCadence(
+  accountId: string,
+): Promise<{
   dueSoonDaysBefore: number;
   overdueRepeatDays: number;
 }> {
-  const snapshot = await adminDb().collection(SETTINGS).doc("reminders").get();
-  if (!snapshot.exists) {
-    // Spec defaults: nudge 3 days before due, chase again weekly.
-    return { dueSoonDaysBefore: 3, overdueRepeatDays: 7 };
-  }
-  const settings = snapshot.data() as SystemSettings;
+  // Decision F: settings live on the account's own settings doc.
+  const settings = await getSystemSettings(accountId);
   return {
     dueSoonDaysBefore: settings.reminders?.dueSoonDaysBefore ?? 3,
     overdueRepeatDays: settings.reminders?.overdueRepeatDays ?? 7,
@@ -538,6 +613,7 @@ async function loadReminderCadence(): Promise<{
 }
 
 function reminderFacts(
+  accountId: string,
   templateKey: "rent_due_reminder" | "arrears_notice",
   invoiceId: string,
   invoice: Invoice,
@@ -550,6 +626,7 @@ function reminderFacts(
     : dueDate.toISOString().slice(0, 10);
 
   return {
+    accountId,
     phoneE164: tenant.phoneE164,
     templateKey,
     reference: invoiceId,
@@ -578,10 +655,12 @@ function wholeDaysBetween(from: Date, to: Date): number {
  * keep every run idempotent.
  */
 export async function generateReminders(
-  actor: SessionUser,
+  accountId: string,
   today: Date = new Date(),
+  actorOverride?: SessionUser,
 ): Promise<ReminderOutcome> {
-  const cadence = await loadReminderCadence();
+  const actor = actorOverride ?? smsSystemActor(accountId);
+  const cadence = await loadReminderCadence(accountId);
   const outcome: ReminderOutcome = { dueSoon: 0, overdue: 0, skipped: 0 };
   if (cadence.dueSoonDaysBefore <= 0 && cadence.overdueRepeatDays <= 0) {
     return outcome;
@@ -590,10 +669,11 @@ export async function generateReminders(
   const db = adminDb();
   const todayInput = today.toISOString().slice(0, 10);
 
-  // Only live invoices need chasing; `paid` and `void` ones are skipped.
-  // No composite index is needed: equality filters only, sorted in memory.
+  // Only this account's live invoices need chasing; `paid` and `void` ones
+  // are skipped. Equality filters only; no composite index needed.
   const invoices = await db
     .collection(INVOICES)
+    .where("accountId", "==", accountId)
     .where("status", "in", ["open", "partial"])
     .limit(REMINDER_SCAN_LIMIT)
     .get();
@@ -646,12 +726,16 @@ export async function generateReminders(
     }
 
     const tenant = tenantSnapshot.data() as Tenant;
+    if (tenant.accountId !== accountId) {
+      outcome.skipped += 1;
+      continue;
+    }
     if (tenant.status !== "active" || tenant.consentSms !== true) {
       outcome.skipped += 1;
       continue;
     }
 
-    const facts = reminderFacts(templateKey, doc.id, invoice, tenant);
+    const facts = reminderFacts(accountId, templateKey, doc.id, invoice, tenant);
     const queued = await enqueueReminderIfNew({
       ...facts,
       campaignId: `${templateKey}:${doc.id}:${campaignSuffix}`,
@@ -667,6 +751,7 @@ export async function generateReminders(
   if (invoices.size > 0) {
     await db.runTransaction(async (tx) => {
       writeAuditLog(tx, {
+        accountId,
         actorUid: actor.uid,
         actorRole: actor.role,
         action: "sms.reminders_generated",

@@ -28,6 +28,7 @@ function actor(
     role,
     active: true,
     propertyIds,
+    accountId: "acc_demo",
   };
 }
 
@@ -54,6 +55,7 @@ async function seedUser(user: SessionUser, overrides: Record<string, unknown> = 
     .doc(user.uid)
     .set({
       uid: user.uid,
+      accountId: "acc_demo",
       fullName: user.fullName,
       email: user.email,
       role: user.role,
@@ -73,6 +75,7 @@ async function seedProperty(
     .collection("properties")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       name: id === "prop_1" ? "Kilimani Heights" : id,
       nameLower: id.toLowerCase(),
       address: "Test address",
@@ -93,6 +96,7 @@ async function seedUnit(
     .collection("units")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       propertyId: "prop_1",
       unitNumber: id.toUpperCase(),
       rentAmountMinor: 4_500_000,
@@ -114,6 +118,7 @@ async function seedTenant(
     .collection("tenants")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       fullName: "Grace Wanjiru",
       phoneE164: "+254712345678",
       nationalIdLast4: "1234",
@@ -135,6 +140,7 @@ async function seedLease(
     .collection("leases")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       tenantId: "tnt_1",
       unitId: "unit_1",
       propertyId: "prop_1",
@@ -176,6 +182,7 @@ async function seedInvoice(
     .collection("invoices")
     .doc(id)
     .set({
+      accountId: "acc_demo",
       leaseId: overrides.leaseId ?? "lease_1",
       tenantId: overrides.tenantId ?? "tnt_1",
       unitId: overrides.unitId ?? "unit_1",
@@ -513,6 +520,7 @@ describe("invoice queries", () => {
       .collection("payments")
       .doc("pay_1")
       .set({
+        accountId: "acc_demo",
         provider: "mpesa",
         providerTransactionId: "SJK4AB12XY",
         amountMinor: 1_500_000,
@@ -528,6 +536,7 @@ describe("invoice queries", () => {
       .collection("paymentAllocations")
       .doc("alloc_1")
       .set({
+        accountId: "acc_demo",
         paymentId: "pay_1",
         invoiceId: "inv_partial",
         amountMinor: 1_500_000,

@@ -16,12 +16,14 @@ import {
 } from "@/services/reports";
 
 const db = () => adminDb();
+const ACCOUNT = "acc_demo";
 
 const admin: SessionUser = {
   uid: "uid_admin",
   email: "admin@rentalmis.test",
   fullName: "Admin",
   role: "admin",
+  accountId: ACCOUNT,
   active: true,
   propertyIds: [],
 };
@@ -45,6 +47,7 @@ async function seedPortfolio(): Promise<void> {
   // Two properties, three active units, one of them vacant.
   const properties = db().batch();
   properties.set(db().collection("properties").doc("prop_1"), {
+    accountId: ACCOUNT,
     name: "Kileleshwa Apartments",
     nameLower: "kileleshwa apartments",
     address: "1 Kileleshwa",
@@ -55,6 +58,7 @@ async function seedPortfolio(): Promise<void> {
     updatedAt: FieldValue.serverTimestamp(),
   });
   properties.set(db().collection("properties").doc("prop_2"), {
+    accountId: ACCOUNT,
     name: "Ngong Plaza",
     nameLower: "ngong plaza",
     address: "2 Ngong",
@@ -73,6 +77,7 @@ async function seedPortfolio(): Promise<void> {
     status: "occupied" | "vacant",
   ) =>
     units.set(db().collection("units").doc(id), {
+      accountId: ACCOUNT,
       propertyId,
       unitNumber: id.toUpperCase(),
       rentAmountMinor: 4_500_000,
@@ -92,6 +97,7 @@ async function seedPortfolio(): Promise<void> {
     .collection("tenants")
     .doc("tnt_1")
     .set({
+      accountId: ACCOUNT,
       fullName: "Grace Wanjiru",
       fullNameLower: "grace wanjiru",
       status: "active",
@@ -121,6 +127,7 @@ async function seedPayment(options: {
     .collection("payments")
     .doc()
     .create({
+      accountId: ACCOUNT,
       provider: options.provider,
       providerTransactionId:
         options.reference ?? `ref_${Math.random().toString(36).slice(2, 12)}`,
@@ -145,6 +152,7 @@ async function seedInvoice(dueDaysFromNow: number, options: {
     .collection("invoices")
     .doc()
     .create({
+      accountId: ACCOUNT,
       tenantId: "tnt_1",
       leaseId: "lease_1",
       unitId: "unit_1",
@@ -216,11 +224,11 @@ describe("dashboardStats", () => {
       db()
         .collection("unmatchedPayments")
         .doc("un_1")
-        .create({ paymentId: "pay_missing", candidateTenantIds: [], reason: "x", reviewStatus: "pending", createdAt: FieldValue.serverTimestamp() }),
+        .create({ accountId: ACCOUNT, paymentId: "pay_missing", candidateTenantIds: [], reason: "x", reviewStatus: "pending", createdAt: FieldValue.serverTimestamp() }),
       db()
         .collection("unmatchedPayments")
         .doc("un_2")
-        .create({ paymentId: "pay_missing", candidateTenantIds: [], reason: "x", reviewStatus: "resolved", createdAt: FieldValue.serverTimestamp() }),
+        .create({ accountId: ACCOUNT, paymentId: "pay_missing", candidateTenantIds: [], reason: "x", reviewStatus: "resolved", createdAt: FieldValue.serverTimestamp() }),
     ]);
 
     // pending payment found so its property scopes the queue row in.
@@ -228,6 +236,7 @@ describe("dashboardStats", () => {
       .collection("payments")
       .doc("pay_missing")
       .create({
+        accountId: ACCOUNT,
         provider: "mpesa",
         providerTransactionId: "pay_missing",
         amountMinor: 2_000_000,

@@ -43,8 +43,17 @@ const db = getFirestore(app);
 
 const PASSWORD = "Password123!";
 
+/**
+ * Two accounts are seeded so cross-account isolation can be exercised:
+ * the demo portfolio lives in `acc_demo`; `acc_other` holds a minimal
+ * second customer with its own admin.
+ */
+const DEMO_ACCOUNT_ID = "acc_demo";
+const OTHER_ACCOUNT_ID = "acc_other";
+
 const staff: Array<{
   uid: string;
+  accountId: string;
   email: string;
   fullName: string;
   role: Role;
@@ -55,6 +64,7 @@ const staff: Array<{
 }> = [
   {
     uid: "staff_admin",
+    accountId: DEMO_ACCOUNT_ID,
     email: "admin@rentalmis.test",
     fullName: "Amina Yusuf",
     role: "admin",
@@ -64,6 +74,7 @@ const staff: Array<{
   },
   {
     uid: "staff_manager",
+    accountId: DEMO_ACCOUNT_ID,
     email: "manager@rentalmis.test",
     fullName: "Brian Kimani",
     role: "property_manager",
@@ -73,6 +84,7 @@ const staff: Array<{
   },
   {
     uid: "staff_finance",
+    accountId: DEMO_ACCOUNT_ID,
     email: "finance@rentalmis.test",
     fullName: "Cynthia Achieng",
     role: "finance",
@@ -82,6 +94,7 @@ const staff: Array<{
   },
   {
     uid: "staff_maintenance",
+    accountId: DEMO_ACCOUNT_ID,
     email: "maintenance@rentalmis.test",
     fullName: "Dennis Mutua",
     role: "maintenance",
@@ -91,6 +104,7 @@ const staff: Array<{
   },
   {
     uid: "staff_auditor",
+    accountId: DEMO_ACCOUNT_ID,
     email: "auditor@rentalmis.test",
     fullName: "Esther Njoroge",
     role: "auditor",
@@ -98,9 +112,21 @@ const staff: Array<{
     active: true,
     phoneE164: "+254700000005",
   },
+  {
+    // Second-account staff used by the rules isolation tests.
+    uid: "other_admin",
+    accountId: OTHER_ACCOUNT_ID,
+    email: "other@rentalmis.test",
+    fullName: "Nafula Ochieng",
+    role: "admin",
+    propertyIds: [],
+    active: true,
+    phoneE164: "+254700000006",
+  },
 ];
 
 const COLLECTIONS = [
+  "accounts",
   "users",
   "properties",
   "units",
@@ -130,6 +156,30 @@ async function wipe(): Promise<void> {
   }
 }
 
+async function upsertAccounts(): Promise<void> {
+  const now = FieldValue.serverTimestamp();
+  await db.collection("accounts").doc(DEMO_ACCOUNT_ID).set({
+    id: DEMO_ACCOUNT_ID,
+    name: "Rentals First Ltd",
+    nameLower: "rentals first ltd",
+    customerType: "agency",
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    legacyMigrated: true,
+  });
+  await db.collection("accounts").doc(OTHER_ACCOUNT_ID).set({
+    id: OTHER_ACCOUNT_ID,
+    name: "Nyali Units Ltd",
+    nameLower: "nyali units ltd",
+    customerType: "landlord",
+    status: "active",
+    createdAt: now,
+    updatedAt: now,
+    legacyMigrated: true,
+  });
+}
+
 async function upsertStaff(): Promise<void> {
   for (const person of staff) {
     try {
@@ -157,6 +207,7 @@ async function upsertStaff(): Promise<void> {
       .set(
         {
           uid: person.uid,
+          accountId: person.accountId,
           fullName: person.fullName,
           email: person.email,
           role: person.role,
@@ -181,6 +232,7 @@ async function seedPortfolio(): Promise<void> {
   );
 
   await db.collection("properties").doc("prop_kilimani").set({
+    accountId: DEMO_ACCOUNT_ID,
     name: "Kilimani Heights",
     nameLower: "kilimani heights",
     address: "Wood Avenue, Kilimani",
@@ -195,11 +247,26 @@ async function seedPortfolio(): Promise<void> {
   // Second property deliberately outside the demo manager's scope so property
   // scoping can be exercised without changing the seed.
   await db.collection("properties").doc("prop_nyali").set({
+    accountId: DEMO_ACCOUNT_ID,
     name: "Nyali Beach Court",
     nameLower: "nyali beach court",
     address: "Off Link Road, Nyali",
     county: "Mombasa",
     managerIds: [],
+    active: true,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+
+  // Minimal second-account property so the rules isolation tests can assert
+  // that account A staff can never reach it.
+  await db.collection("properties").doc("prop_other").set({
+    accountId: OTHER_ACCOUNT_ID,
+    name: "Other Account Flat",
+    nameLower: "other account flat",
+    address: "1 Isolation Road",
+    county: "Nairobi",
+    managerIds: ["other_admin"],
     active: true,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
@@ -246,6 +313,7 @@ async function seedPortfolio(): Promise<void> {
       .collection("units")
       .doc(unit.id)
       .set({
+        accountId: DEMO_ACCOUNT_ID,
         propertyId: unit.propertyId ?? "prop_kilimani",
         unitNumber: unit.unitNumber,
         rentAmountMinor: unit.rent,
@@ -312,6 +380,7 @@ async function seedPortfolio(): Promise<void> {
       .collection("tenants")
       .doc(tenant.id)
       .set({
+        accountId: DEMO_ACCOUNT_ID,
         fullName: tenant.fullName,
         fullNameLower: tenant.fullName.toLowerCase(),
         phoneE164: tenant.phoneE164,
@@ -334,16 +403,22 @@ async function seedPortfolio(): Promise<void> {
         updatedAt: FieldValue.serverTimestamp(),
       });
 
-    // Unique-active-phone index used by payment matching.
-    await db.collection("tenantPhones").doc(tenant.phoneE164).set({
-      tenantId: tenant.id,
-      active: true,
-      createdAt: FieldValue.serverTimestamp(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    // Unique-active-phone index used by payment matching. Decision E: the
+    // document id is `{accountId}_{phone}`.
+    await db
+      .collection("tenantPhones")
+      .doc(`${DEMO_ACCOUNT_ID}_${tenant.phoneE164}`)
+      .set({
+        accountId: DEMO_ACCOUNT_ID,
+        tenantId: tenant.id,
+        active: true,
+        createdAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
   }
 
   await db.collection("leases").doc("lease_wanjiru_a1").set({
+    accountId: DEMO_ACCOUNT_ID,
     tenantId: "tnt_wanjiru",
     unitId: "unit_a1",
     propertyId: "prop_kilimani",
@@ -359,6 +434,7 @@ async function seedPortfolio(): Promise<void> {
   });
 
   await db.collection("leases").doc("lease_otieno_b1").set({
+    accountId: DEMO_ACCOUNT_ID,
     tenantId: "tnt_otieno",
     unitId: "unit_b1",
     propertyId: "prop_kilimani",
@@ -374,6 +450,7 @@ async function seedPortfolio(): Promise<void> {
   });
 
   await db.collection("invoices").doc(`lease_wanjiru_a1_${periodKey}`).set({
+    accountId: DEMO_ACCOUNT_ID,
     leaseId: "lease_wanjiru_a1",
     tenantId: "tnt_wanjiru",
     unitId: "unit_a1",
@@ -392,6 +469,7 @@ async function seedPortfolio(): Promise<void> {
   // Part-paid by the M-Pesa receipt seeded below, so the ledger has a real
   // allocation and a partial invoice to inspect.
   await db.collection("invoices").doc(`lease_otieno_b1_${periodKey}`).set({
+    accountId: DEMO_ACCOUNT_ID,
     leaseId: "lease_otieno_b1",
     tenantId: "tnt_otieno",
     unitId: "unit_b1",
@@ -413,6 +491,7 @@ async function seedPortfolio(): Promise<void> {
     .collection("invoices")
     .doc(`lease_wanjiru_a1_${previousPeriodKey}`)
     .set({
+      accountId: DEMO_ACCOUNT_ID,
       leaseId: "lease_wanjiru_a1",
       tenantId: "tnt_wanjiru",
       unitId: "unit_a1",
@@ -434,6 +513,7 @@ async function seedPortfolio(): Promise<void> {
     new Date(now.getTime() - 2 * 86_400_000),
   );
   await db.collection("payments").doc("pay_otieno_demo").set({
+    accountId: DEMO_ACCOUNT_ID,
     provider: "mpesa",
     providerTransactionId: "SJK4AB12XY",
     amountMinor: 3_000_000,
@@ -459,6 +539,7 @@ async function seedPortfolio(): Promise<void> {
     .collection("paymentAllocations")
     .doc(`pay_otieno_demo_lease_otieno_b1_${periodKey}`)
     .set({
+      accountId: DEMO_ACCOUNT_ID,
       paymentId: "pay_otieno_demo",
       invoiceId: `lease_otieno_b1_${periodKey}`,
       amountMinor: 3_000_000,
@@ -469,6 +550,7 @@ async function seedPortfolio(): Promise<void> {
   // Money that arrived without a reliable tenant match. It must stay in the
   // unmatched queue until a person decides who it belongs to.
   await db.collection("payments").doc("pay_unmatched_demo").set({
+    accountId: DEMO_ACCOUNT_ID,
     provider: "mpesa",
     providerTransactionId: "QGR7X2M9KL",
     amountMinor: 2_500_000,
@@ -484,6 +566,7 @@ async function seedPortfolio(): Promise<void> {
   });
 
   await db.collection("unmatchedPayments").doc("unm_demo_1").set({
+    accountId: DEMO_ACCOUNT_ID,
     paymentId: "pay_unmatched_demo",
     candidateTenantIds: [],
     reason: "Payer phone did not match an active tenant",
@@ -494,6 +577,7 @@ async function seedPortfolio(): Promise<void> {
   // A completed statement import, so the import screen has history on a fresh
   // seed without needing a real CSV upload.
   await db.collection("bankSyncRuns").doc("run_demo_statement").set({
+    accountId: DEMO_ACCOUNT_ID,
     bankCode: "EQ",
     fileName: "equity-demo.csv",
     source: "statement",
@@ -512,6 +596,7 @@ async function seedPortfolio(): Promise<void> {
   });
 
   await db.collection("maintenanceRequests").doc("mr_leak_a1").set({
+    accountId: DEMO_ACCOUNT_ID,
     propertyId: "prop_kilimani",
     unitId: "unit_a1",
     title: "Leaking kitchen sink",
@@ -525,6 +610,7 @@ async function seedPortfolio(): Promise<void> {
 
   // Deliberately outside the maintenance demo user's scope.
   await db.collection("maintenanceRequests").doc("mr_paint_n1").set({
+    accountId: DEMO_ACCOUNT_ID,
     propertyId: "prop_nyali",
     unitId: "unit_n1",
     title: "Corridor paint peeling",
@@ -538,70 +624,66 @@ async function seedPortfolio(): Promise<void> {
 }
 
 async function seedSettings(): Promise<void> {
-  await db.collection("systemSettings").doc("billing").set({
-    timezone: "Africa/Nairobi",
-    currency: "KES",
-    billing: {
-      allocationStrategy: "oldest_first",
-      overpayment: "tenant_credit",
-      lateFeeEnabled: false,
-      gracePeriodDays: 5,
-      invoiceGenerationDay: 1,
+  // Decision F: one settings document per account, sections inside it.
+  const templates = [
+    {
+      key: "payment_receipt",
+      enabled: true,
+      body: "Rental MIS: received KES {{amount}} for {{unit}}. Ref {{reference}}. Thank you.",
     },
-    updatedBy: "staff_admin",
-    updatedAt: FieldValue.serverTimestamp(),
-  });
-
-  await db.collection("systemSettings").doc("reminders").set({
-    timezone: "Africa/Nairobi",
-    currency: "KES",
-    reminders: {
-      dueSoonDaysBefore: 3,
-      overdueRepeatDays: 7,
-      maxAttempts: 5,
+    {
+      key: "rent_due_reminder",
+      enabled: true,
+      body: "Rental MIS: rent of KES {{amount}} for {{unit}} is due on {{dueDate}}.",
     },
-    updatedBy: "staff_admin",
-    updatedAt: FieldValue.serverTimestamp(),
-  });
+    {
+      key: "arrears_notice",
+      enabled: true,
+      body: "Rental MIS: balance of KES {{balance}} for {{unit}} is overdue. Please settle.",
+    },
+    {
+      key: "lease_expiry",
+      enabled: true,
+      body: "Rental MIS: your lease for {{unit}} expires on {{endDate}}. Contact the office to renew.",
+    },
+    {
+      key: "bulk_announcement",
+      enabled: false,
+      body: "{{message}}",
+    },
+  ];
 
-  await db.collection("systemSettings").doc("sms").set({
-    timezone: "Africa/Nairobi",
-    currency: "KES",
-    templates: [
-      {
-        key: "payment_receipt",
-        enabled: true,
-        body: "Rental MIS: received KES {{amount}} for {{unit}}. Ref {{reference}}. Thank you.",
-      },
-      {
-        key: "rent_due_reminder",
-        enabled: true,
-        body: "Rental MIS: rent of KES {{amount}} for {{unit}} is due on {{dueDate}}.",
-      },
-      {
-        key: "arrears_notice",
-        enabled: true,
-        body: "Rental MIS: balance of KES {{balance}} for {{unit}} is overdue. Please settle.",
-      },
-      {
-        key: "lease_expiry",
-        enabled: true,
-        body: "Rental MIS: your lease for {{unit}} expires on {{endDate}}. Contact the office to renew.",
-      },
-      {
-        key: "bulk_announcement",
-        enabled: false,
-        body: "{{message}}",
-      },
-    ],
-    updatedBy: "staff_admin",
-    updatedAt: FieldValue.serverTimestamp(),
-  });
+  for (const accountId of [DEMO_ACCOUNT_ID, OTHER_ACCOUNT_ID]) {
+    await db
+      .collection("systemSettings")
+      .doc(accountId)
+      .set({
+        accountId,
+        timezone: "Africa/Nairobi",
+        currency: "KES",
+        billing: {
+          allocationStrategy: "oldest_first",
+          overpayment: "tenant_credit",
+          lateFeeEnabled: false,
+          gracePeriodDays: 5,
+          invoiceGenerationDay: 1,
+        },
+        reminders: {
+          dueSoonDaysBefore: 3,
+          overdueRepeatDays: 7,
+          maxAttempts: 5,
+        },
+        templates,
+        updatedBy: "staff_admin",
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+  }
 }
 
 async function main() {
   console.log(`Seeding project "${projectId}" against the local emulator…`);
   await wipe();
+  await upsertAccounts();
   await upsertStaff();
   await seedPortfolio();
   await seedSettings();

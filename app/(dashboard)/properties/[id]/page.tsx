@@ -55,7 +55,7 @@ export default async function PropertyDetailPage({
   const canManage = can(user.role, "manage_properties");
   const canAssignManagers = user.role === "admin";
   const managerOptions = canManage
-    ? await listStaffOptions(["property_manager", "admin"])
+    ? await listStaffOptions(user.accountId, ["property_manager", "admin"])
     : [];
 
   const occupancy =

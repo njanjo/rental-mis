@@ -105,6 +105,7 @@ export async function GET(request: NextRequest) {
     // Exports move money data out of the system; log the fact, not the data.
     await adminDb().runTransaction(async (tx) => {
       writeAuditLog(tx, {
+        accountId: user.accountId,
         actorUid: user.uid,
         actorRole: user.role,
         action: "report.exported",

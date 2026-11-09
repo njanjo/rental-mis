@@ -32,11 +32,39 @@ export const ROLE_LABELS: Record<Role, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// Account (customer) — the multi-tenant root
+// ---------------------------------------------------------------------------
+
+/** A customer: an agency or an individual landlord. One account per login. */
+export const ACCOUNT_TYPES = ["agency", "landlord"] as const;
+export type AccountType = (typeof ACCOUNT_TYPES)[number];
+
+export const ACCOUNT_STATUSES = ["active", "suspended", "archived"] as const;
+export type AccountStatus = (typeof ACCOUNT_STATUSES)[number];
+
+export interface Account {
+  id: string;
+  name: string;
+  customerType: AccountType;
+  status: AccountStatus;
+  /** Lower-cased name for search. Written by the service layer. */
+  nameLower: string;
+  contactPhoneE164?: string;
+  contactEmail?: string;
+  /** Set by the Phase 1 migration; marks legacy data as moved in. */
+  legacyMigrated?: boolean;
+  createdAt: FirestoreTimestamp;
+  updatedAt: FirestoreTimestamp;
+}
+
+// ---------------------------------------------------------------------------
 // Staff
 // ---------------------------------------------------------------------------
 
 export interface UserProfile {
   uid: string;
+  /** Account this staff member belongs to. One account per login. */
+  accountId: string;
   fullName: string;
   email: string;
   role: Role;
@@ -59,6 +87,8 @@ export type UnitStatus = (typeof UNIT_STATUSES)[number];
 
 export interface Property {
   id: string;
+  /** Owning account. Set by the service layer on every write. */
+  accountId: string;
   name: string;
   /** Lower-cased name for prefix search. Written by the service layer. */
   nameLower: string;
@@ -74,6 +104,7 @@ export interface Property {
 
 export interface Unit {
   id: string;
+  accountId: string;
   propertyId: string;
   unitNumber: string;
   rentAmountMinor: MinorUnits;
@@ -101,6 +132,7 @@ export type TenantStatus = (typeof TENANT_STATUSES)[number];
 
 export interface Tenant {
   id: string;
+  accountId: string;
   fullName: string;
   /** Lower-cased full name for search. */
   fullNameLower: string;
@@ -128,8 +160,10 @@ export interface Tenant {
   updatedAt: FirestoreTimestamp;
 }
 
-/** Unique-active-phone index. Document id is the E.164 number. */
+/** Unique-active-phone index. Document id is `{accountId}_{e164}`. */
 export interface TenantPhone {
+  /** Owning account. Part of the document id. */
+  accountId: string;
   tenantId: string;
   active: boolean;
   createdAt: FirestoreTimestamp;
@@ -146,6 +180,7 @@ export type LeaseStatus = (typeof LEASE_STATUSES)[number];
 
 export interface Lease {
   id: string;
+  accountId: string;
   tenantId: string;
   unitId: string;
   propertyId: string;
@@ -180,6 +215,7 @@ export type InvoiceStatus = (typeof INVOICE_STATUSES)[number];
 
 export interface Invoice {
   id: string;
+  accountId: string;
   leaseId: string;
   tenantId: string;
   unitId: string;
@@ -233,6 +269,7 @@ export type PaymentSource = (typeof PAYMENT_SOURCES)[number];
 
 export interface Payment {
   id: string;
+  accountId: string;
   provider: PaymentProvider;
   /** Provider transaction reference. Unique per provider — idempotency key. */
   providerTransactionId: string;
@@ -267,6 +304,7 @@ export interface Payment {
 
 export interface PaymentAllocation {
   id: string;
+  accountId: string;
   paymentId: string;
   invoiceId: string;
   amountMinor: MinorUnits;
@@ -289,6 +327,7 @@ export type MpesaStkStatus = (typeof MPESA_STK_STATUSES)[number];
  */
 export interface MpesaStkRequest {
   id: string;
+  accountId: string;
   checkoutRequestId: string;
   merchantRequestId: string;
   /** Where the prompt was sent, E.164. */
@@ -315,6 +354,7 @@ export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
 export interface UnmatchedPayment {
   id: string;
+  accountId: string;
   paymentId: string;
   candidateTenantIds: string[];
   reason: string;
@@ -344,6 +384,7 @@ export type ProviderEventKind = (typeof PROVIDER_EVENT_KINDS)[number];
 
 export interface ProviderEvent {
   id: string;
+  accountId: string;
   provider: PaymentProvider;
   eventId?: string;
   kind?: ProviderEventKind;
@@ -378,6 +419,7 @@ export type SmsTemplateKey =
 
 export interface SmsOutboxItem {
   id: string;
+  accountId: string;
   tenantId?: string;
   phoneE164: string;
   templateKey: SmsTemplateKey;
@@ -399,6 +441,7 @@ export interface SmsOutboxItem {
 
 export interface SmsLog {
   id: string;
+  accountId: string;
   outboxId: string;
   provider: "beam";
   providerMessageId?: string;
@@ -427,6 +470,7 @@ export type MaintenanceStatus = (typeof MAINTENANCE_STATUSES)[number];
 
 export interface MaintenanceRequest {
   id: string;
+  accountId: string;
   propertyId: string;
   unitId: string;
   title: string;
@@ -451,6 +495,7 @@ export interface MaintenanceRequest {
 
 export interface AuditLog {
   id: string;
+  accountId: string;
   actorUid: string;
   actorRole?: Role;
   action: string;
@@ -467,6 +512,7 @@ export type BankSyncStatus = (typeof BANK_SYNC_STATUSES)[number];
 
 export interface BankSyncRun {
   id: string;
+  accountId: string;
   bankCode: string;
   startedAt: FirestoreTimestamp;
   finishedAt?: FirestoreTimestamp;
@@ -513,7 +559,8 @@ export interface SmsTemplate {
 }
 
 export interface SystemSettings {
-  id: "billing" | "reminders" | "sms";
+  /** Document id is the owning accountId (one settings doc per account). */
+  accountId: string;
   timezone: string;
   currency: Currency;
   billing?: BillingRules;

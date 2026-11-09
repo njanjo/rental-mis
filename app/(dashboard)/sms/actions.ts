@@ -14,7 +14,6 @@ import {
   generateReminders,
   pollDeliveryReports,
   runOutboxWorker,
-  smsSystemActor,
 } from "@/services/sms";
 
 /**
@@ -68,7 +67,7 @@ export async function runSmsJobAction(
       return formSuccess(message);
     }
 
-    const outcome = await generateReminders(smsSystemActor(), new Date());
+    const outcome = await generateReminders(user.accountId, new Date(), user);
     revalidateSms();
     return formSuccess(
       `Queued ${outcome.dueSoon} due-soon and ${outcome.overdue} overdue notices${outcome.skipped > 0 ? ` (${outcome.skipped} skipped)` : ""}.`,

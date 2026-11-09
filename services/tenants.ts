@@ -13,6 +13,7 @@ import {
   assertPropertyAccess,
   chunkIn,
   hasGlobalScope,
+  requireAccount,
   scopePropertyIds,
 } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
@@ -69,11 +70,15 @@ interface TenantQuery {
 }
 
 function buildQuery(
+  accountId: string,
   scope: string[] | null,
   params: ListTenantsParams,
 ): TenantQuery {
   const db = adminDb();
-  let query: Query = db.collection(COLLECTION).orderBy("fullNameLower");
+  let query: Query = db
+    .collection(COLLECTION)
+    .where("accountId", "==", accountId)
+    .orderBy("fullNameLower");
   let scopeFallback: string[] | null = null;
 
   if (params.propertyId) {
@@ -100,7 +105,10 @@ async function applyCursor(query: Query, cursor?: string): Promise<Query> {
   return query.startAfter(snapshot);
 }
 
-async function unitNumbers(ids: string[]): Promise<Record<string, string>> {
+async function unitNumbers(
+  accountId: string,
+  ids: string[],
+): Promise<Record<string, string>> {
   const unique = [...new Set(ids.filter(Boolean))];
   if (unique.length === 0) return {};
 
@@ -110,6 +118,7 @@ async function unitNumbers(ids: string[]): Promise<Record<string, string>> {
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection("units")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -120,13 +129,19 @@ async function unitNumbers(ids: string[]): Promise<Record<string, string>> {
   return result;
 }
 
-async function decorate(docs: QueryDocumentSnapshot[]): Promise<TenantListItem[]> {
+async function decorate(
+  accountId: string,
+  docs: QueryDocumentSnapshot[],
+): Promise<TenantListItem[]> {
   if (docs.length === 0) return [];
 
   const rows = docs.map((doc) => ({ id: doc.id, data: doc.data() as Tenant }));
   const [propertyNames, units] = await Promise.all([
-    getPropertyNames(rows.flatMap((row) => row.data.propertyIds ?? [])),
-    unitNumbers(rows.map((row) => row.data.currentUnitId ?? "")),
+    getPropertyNames(
+      accountId,
+      rows.flatMap((row) => row.data.propertyIds ?? []),
+    ),
+    unitNumbers(accountId, rows.map((row) => row.data.currentUnitId ?? "")),
   ]);
 
   return rows.map(({ id, data }) => ({
@@ -160,14 +175,15 @@ export async function listTenants(
 ): Promise<PageResult<TenantListItem>> {
   if (params.propertyId) assertPropertyAccess(actor, params.propertyId);
 
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   const pageSize = clampPageSize(params.pageSize);
   const q = params.q?.trim().toLowerCase() ?? "";
-  const { query: base, scopeFallback } = buildQuery(scope, params);
+  const { query: base, scopeFallback } = buildQuery(accountId, scope, params);
 
   if (q) {
     const snapshot = await base.limit(SEARCH_LIMIT).get();
-    let rows = await decorate(snapshot.docs);
+    let rows = await decorate(accountId, snapshot.docs);
     if (scopeFallback) {
       rows = rows.filter((row) =>
         row.propertyIds.some((id) => scopeFallback.includes(id)),
@@ -188,7 +204,7 @@ export async function listTenants(
   const hasMore = docs.length > pageSize;
   if (hasMore) docs = docs.slice(0, pageSize);
 
-  let items = await decorate(docs);
+  let items = await decorate(accountId, docs);
   if (scopeFallback) {
     items = items.filter((row) =>
       row.propertyIds.some((id) => scopeFallback.includes(id)),
@@ -205,15 +221,19 @@ export async function getTenant(
   actor: SessionUser,
   tenantId: string,
 ): Promise<TenantListItem> {
+  const accountId = requireAccount(actor);
   const snapshot = await adminDb().collection(COLLECTION).doc(tenantId).get();
   if (!snapshot.exists) {
     throw new ServiceError("not_found", "Tenant not found.");
   }
 
   const tenant = snapshot.data() as Tenant;
+  if (tenant.accountId !== accountId) {
+    throw new ServiceError("not_found", "Tenant not found.");
+  }
   assertTenantAccess(actor, tenant);
 
-  const [item] = await decorate([snapshot as QueryDocumentSnapshot]);
+  const [item] = await decorate(accountId, [snapshot as QueryDocumentSnapshot]);
   return item;
 }
 
@@ -223,10 +243,12 @@ export async function getTenantOptions(
 ): Promise<TenantOption[]> {
   if (options.propertyId) assertPropertyAccess(actor, options.propertyId);
 
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   const db = adminDb();
   let query: Query = db
     .collection(COLLECTION)
+    .where("accountId", "==", accountId)
     .where("status", "==", "active")
     .orderBy("fullNameLower");
 
@@ -255,9 +277,15 @@ export async function getTenantOptions(
     .sort((a, b) => a.fullName.localeCompare(b.fullName));
 }
 
-async function assertPropertyActive(propertyId: string): Promise<void> {
+async function assertPropertyActive(
+  accountId: string,
+  propertyId: string,
+): Promise<void> {
   const snapshot = await adminDb().collection("properties").doc(propertyId).get();
   if (!snapshot.exists) {
+    throw new ServiceError("not_found", "Property not found.");
+  }
+  if (snapshot.data()?.accountId !== accountId) {
     throw new ServiceError("not_found", "Property not found.");
   }
   if (!snapshot.data()?.active) {
@@ -274,11 +302,12 @@ export async function createTenant(
 ): Promise<string> {
   assertCapability(actor, "manage_tenants");
   assertPropertyAccess(actor, input.propertyId);
-  await assertPropertyActive(input.propertyId);
+  const accountId = requireAccount(actor);
+  await assertPropertyActive(accountId, input.propertyId);
 
   const db = adminDb();
   const ref = db.collection(COLLECTION).doc();
-  const phoneRef = db.collection(PHONE_INDEX).doc(input.phone);
+  const phoneRef = db.collection(PHONE_INDEX).doc(`${accountId}_${input.phone}`);
 
   await db.runTransaction(async (tx) => {
     const existingPhone = await tx.get(phoneRef);
@@ -293,6 +322,7 @@ export async function createTenant(
     }
 
     tx.set(ref, {
+      accountId,
       fullName: input.fullName,
       fullNameLower: input.fullName.toLowerCase(),
       phoneE164: input.phone,
@@ -310,6 +340,7 @@ export async function createTenant(
     });
 
     tx.set(phoneRef, {
+      accountId,
       tenantId: ref.id,
       active: true,
       createdAt: existingPhone.exists
@@ -319,6 +350,7 @@ export async function createTenant(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "tenant.created",
@@ -341,6 +373,7 @@ export async function updateTenant(
   input: TenantUpdateInput,
 ): Promise<void> {
   assertCapability(actor, "manage_tenants");
+  const accountId = requireAccount(actor);
 
   const db = adminDb();
   const ref = db.collection(COLLECTION).doc(tenantId);
@@ -352,11 +385,16 @@ export async function updateTenant(
     }
 
     const before = snapshot.data() as Tenant;
+    if (before.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this tenant.");
+    }
     assertTenantAccess(actor, before);
 
     const phoneChanged = input.phone !== before.phoneE164;
-    const oldPhoneRef = db.collection(PHONE_INDEX).doc(before.phoneE164);
-    const newPhoneRef = db.collection(PHONE_INDEX).doc(input.phone);
+    const oldPhoneRef = db
+      .collection(PHONE_INDEX)
+      .doc(`${accountId}_${before.phoneE164}`);
+    const newPhoneRef = db.collection(PHONE_INDEX).doc(`${accountId}_${input.phone}`);
 
     if (phoneChanged) {
       const existingPhone = await tx.get(newPhoneRef);
@@ -381,6 +419,7 @@ export async function updateTenant(
       }
 
       tx.set(newPhoneRef, {
+        accountId,
         tenantId,
         active: true,
         createdAt: existingPhone.exists
@@ -403,6 +442,7 @@ export async function updateTenant(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "tenant.updated",
@@ -433,6 +473,7 @@ export async function setTenantStatus(
   reason: string,
 ): Promise<void> {
   assertCapability(actor, "manage_tenants");
+  const accountId = requireAccount(actor);
 
   const db = adminDb();
   const ref = db.collection(COLLECTION).doc(tenantId);
@@ -444,6 +485,9 @@ export async function setTenantStatus(
     }
 
     const tenant = snapshot.data() as Tenant;
+    if (tenant.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this tenant.");
+    }
     assertTenantAccess(actor, tenant);
 
     if (tenant.status === status) {
@@ -463,6 +507,7 @@ export async function setTenantStatus(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "tenant.status_changed",

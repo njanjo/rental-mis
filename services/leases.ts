@@ -14,6 +14,7 @@ import {
   assertPropertyAccess,
   chunkIn,
   hasGlobalScope,
+  requireAccount,
   scopePropertyIds,
 } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
@@ -53,11 +54,15 @@ function inScope(scope: string[] | null, propertyId: string): boolean {
 }
 
 function buildQuery(
+  accountId: string,
   scope: string[] | null,
   params: ListLeasesParams,
 ): { query: Query; scopeFallback: string[] | null } {
   const db = adminDb();
-  let query: Query = db.collection(COLLECTION).orderBy("startDate", "desc");
+  let query: Query = db
+    .collection(COLLECTION)
+    .where("accountId", "==", accountId)
+    .orderBy("startDate", "desc");
   let scopeFallback: string[] | null = null;
 
   if (params.propertyId) {
@@ -90,6 +95,7 @@ interface TenantSummary {
 }
 
 async function tenantsById(
+  accountId: string,
   ids: string[],
 ): Promise<Record<string, TenantSummary>> {
   const unique = [...new Set(ids.filter(Boolean))];
@@ -101,6 +107,7 @@ async function tenantsById(
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection("tenants")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -116,6 +123,7 @@ async function tenantsById(
 }
 
 async function unitsById(
+  accountId: string,
   ids: string[],
 ): Promise<Record<string, { unitNumber: string; propertyId: string }>> {
   const unique = [...new Set(ids.filter(Boolean))];
@@ -127,6 +135,7 @@ async function unitsById(
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection("units")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -141,14 +150,17 @@ async function unitsById(
   return result;
 }
 
-async function decorate(docs: QueryDocumentSnapshot[]): Promise<LeaseListItem[]> {
+async function decorate(
+  accountId: string,
+  docs: QueryDocumentSnapshot[],
+): Promise<LeaseListItem[]> {
   if (docs.length === 0) return [];
 
   const rows = docs.map((doc) => ({ id: doc.id, data: doc.data() as Lease }));
   const [propertyNames, tenants, units] = await Promise.all([
-    getPropertyNames(rows.map((row) => row.data.propertyId)),
-    tenantsById(rows.map((row) => row.data.tenantId)),
-    unitsById(rows.map((row) => row.data.unitId)),
+    getPropertyNames(accountId, rows.map((row) => row.data.propertyId)),
+    tenantsById(accountId, rows.map((row) => row.data.tenantId)),
+    unitsById(accountId, rows.map((row) => row.data.unitId)),
   ]);
 
   return rows.map(({ id, data }) => {
@@ -184,16 +196,17 @@ export async function listLeases(
   actor: SessionUser,
   params: ListLeasesParams = {},
 ): Promise<PageResult<LeaseListItem>> {
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   if (params.propertyId) assertPropertyAccess(actor, params.propertyId);
 
   const pageSize = clampPageSize(params.pageSize);
   const q = params.q?.trim().toLowerCase() ?? "";
-  const { query: base, scopeFallback } = buildQuery(scope, params);
+  const { query: base, scopeFallback } = buildQuery(accountId, scope, params);
 
   if (q) {
     const snapshot = await base.limit(SEARCH_LIMIT).get();
-    let rows = await decorate(snapshot.docs);
+    let rows = await decorate(accountId, snapshot.docs);
     if (scopeFallback) {
       rows = rows.filter((row) => inScope(scopeFallback, row.propertyId));
     }
@@ -215,7 +228,7 @@ export async function listLeases(
   const hasMore = docs.length > pageSize;
   if (hasMore) docs = docs.slice(0, pageSize);
 
-  let items = await decorate(docs);
+  let items = await decorate(accountId, docs);
   if (scopeFallback) {
     items = items.filter((row) => inScope(scopeFallback, row.propertyId));
   }
@@ -230,19 +243,24 @@ export async function getLease(
   actor: SessionUser,
   leaseId: string,
 ): Promise<LeaseListItem> {
+  const accountId = requireAccount(actor);
   const snapshot = await adminDb().collection(COLLECTION).doc(leaseId).get();
   if (!snapshot.exists) {
     throw new ServiceError("not_found", "Lease not found.");
   }
 
   const lease = snapshot.data() as Lease;
+  if (lease.accountId !== accountId) {
+    throw new ServiceError("not_found", "Lease not found.");
+  }
   assertPropertyAccess(actor, lease.propertyId);
 
-  const [item] = await decorate([snapshot as QueryDocumentSnapshot]);
+  const [item] = await decorate(accountId, [snapshot as QueryDocumentSnapshot]);
 
   // Renewal chain: a lease can have at most one direct successor.
   const successor = await adminDb()
     .collection(COLLECTION)
+    .where("accountId", "==", accountId)
     .where("renewedFromLeaseId", "==", leaseId)
     .limit(1)
     .get();
@@ -266,6 +284,7 @@ export async function createLease(
   input: LeaseCreateInput,
 ): Promise<string> {
   assertCapability(actor, "manage_leases");
+  const accountId = requireAccount(actor);
 
   const db = adminDb();
   const ref = db.collection(COLLECTION).doc();
@@ -278,6 +297,9 @@ export async function createLease(
       throw new ServiceError("not_found", "Unit not found.");
     }
     const unit = unitSnapshot.data() as Unit;
+    if (unit.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this unit.");
+    }
     assertPropertyAccess(actor, unit.propertyId);
 
     const tenantSnapshot = await tx.get(tenantRef);
@@ -285,6 +307,9 @@ export async function createLease(
       throw new ServiceError("not_found", "Tenant not found.");
     }
     const tenant = tenantSnapshot.data() as Tenant;
+    if (tenant.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this tenant.");
+    }
     assertTenantAccess(actor, tenant);
 
     const propertySnapshot = await tx.get(
@@ -293,7 +318,11 @@ export async function createLease(
     if (!propertySnapshot.exists) {
       throw new ServiceError("not_found", "Property not found.");
     }
-    if (!(propertySnapshot.data() as Property).active) {
+    const property = propertySnapshot.data() as Property;
+    if (property.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this property.");
+    }
+    if (!property.active) {
       throw new ServiceError(
         "conflict",
         "This property is archived. Restore it before starting a lease.",
@@ -331,6 +360,7 @@ export async function createLease(
     const openLeases = await tx.get(
       db
         .collection(COLLECTION)
+        .where("accountId", "==", accountId)
         .where("unitId", "==", input.unitId)
         .where("status", "in", ["pending", "active"])
         .limit(1),
@@ -344,6 +374,7 @@ export async function createLease(
     }
 
     tx.set(ref, {
+      accountId,
       tenantId: input.tenantId,
       unitId: input.unitId,
       propertyId: unit.propertyId,
@@ -366,6 +397,7 @@ export async function createLease(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "lease.created",
@@ -398,6 +430,7 @@ export async function updateLeaseTerms(
   input: LeaseTermsInput,
 ): Promise<void> {
   assertCapability(actor, "manage_leases");
+  const accountId = requireAccount(actor);
 
   const db = adminDb();
   const ref = db.collection(COLLECTION).doc(leaseId);
@@ -409,6 +442,9 @@ export async function updateLeaseTerms(
     }
 
     const lease = snapshot.data() as Lease;
+    if (lease.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this lease.");
+    }
     assertPropertyAccess(actor, lease.propertyId);
 
     if (lease.status === "terminated" || lease.status === "expired") {
@@ -426,6 +462,7 @@ export async function updateLeaseTerms(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "lease.terms_updated",
@@ -451,6 +488,7 @@ export async function activateLease(
   leaseId: string,
 ): Promise<void> {
   assertCapability(actor, "manage_leases");
+  const accountId = requireAccount(actor);
 
   const db = adminDb();
   const leaseRef = db.collection(COLLECTION).doc(leaseId);
@@ -462,6 +500,9 @@ export async function activateLease(
     }
 
     const lease = leaseSnapshot.data() as Lease;
+    if (lease.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this lease.");
+    }
     assertPropertyAccess(actor, lease.propertyId);
 
     if (lease.status !== "pending") {
@@ -499,6 +540,9 @@ export async function activateLease(
       throw new ServiceError("not_found", "Unit not found.");
     }
     const unit = unitSnapshot.data() as Unit;
+    if (unit.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this unit.");
+    }
     if (unit.propertyId !== lease.propertyId) {
       throw new ServiceError(
         "conflict",
@@ -517,6 +561,9 @@ export async function activateLease(
       throw new ServiceError("not_found", "Tenant not found.");
     }
     const tenant = tenantSnapshot.data() as Tenant;
+    if (tenant.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this tenant.");
+    }
     if (!canAccessTenant(actor, tenant)) {
       throw new ServiceError("forbidden", "You do not have access to this tenant.");
     }
@@ -530,6 +577,9 @@ export async function activateLease(
     const previousSnapshot = previousRef ? await tx.get(previousRef) : null;
     const previous =
       previousSnapshot?.exists ? (previousSnapshot.data() as Lease) : null;
+    if (previous && previous.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this lease.");
+    }
     const replacedLeaseId =
       previous?.status === "active" ? previousSnapshot?.id : undefined;
 
@@ -586,6 +636,7 @@ export async function activateLease(
       });
 
       writeAuditLog(tx, {
+        accountId,
         actorUid: actor.uid,
         actorRole: actor.role,
         action: "lease.expired",
@@ -598,6 +649,7 @@ export async function activateLease(
     }
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "lease.activated",
@@ -619,6 +671,7 @@ export async function terminateLease(
   input: LeaseTerminateInput,
 ): Promise<void> {
   assertCapability(actor, "manage_leases");
+  const accountId = requireAccount(actor);
 
   const db = adminDb();
   const leaseRef = db.collection(COLLECTION).doc(leaseId);
@@ -630,6 +683,9 @@ export async function terminateLease(
     }
 
     const lease = leaseSnapshot.data() as Lease;
+    if (lease.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this lease.");
+    }
     assertPropertyAccess(actor, lease.propertyId);
 
     if (lease.status !== "pending" && lease.status !== "active") {
@@ -668,6 +724,9 @@ export async function terminateLease(
         throw new ServiceError("not_found", "Unit not found.");
       }
       const unit = unitSnapshot.data() as Unit;
+      if (unit.accountId !== accountId) {
+        throw new ServiceError("forbidden", "You do not have access to this unit.");
+      }
       if (unit.activeLeaseId && unit.activeLeaseId !== leaseId) {
         throw new ServiceError(
           "conflict",
@@ -683,16 +742,19 @@ export async function terminateLease(
       });
     }
 
-    if (
-      tenantSnapshot.exists &&
-      (tenantSnapshot.data() as Tenant).currentLeaseId === leaseId
-    ) {
-      tx.update(tenantRef, {
-        currentLeaseId: FieldValue.delete(),
-        currentUnitId: FieldValue.delete(),
-        currentPropertyId: FieldValue.delete(),
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+    if (tenantSnapshot.exists) {
+      const tenant = tenantSnapshot.data() as Tenant;
+      if (tenant.accountId !== accountId) {
+        throw new ServiceError("forbidden", "You do not have access to this tenant.");
+      }
+      if (tenant.currentLeaseId === leaseId) {
+        tx.update(tenantRef, {
+          currentLeaseId: FieldValue.delete(),
+          currentUnitId: FieldValue.delete(),
+          currentPropertyId: FieldValue.delete(),
+          updatedAt: FieldValue.serverTimestamp(),
+        });
+      }
     }
 
     tx.update(leaseRef, {
@@ -704,6 +766,7 @@ export async function terminateLease(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "lease.terminated",
@@ -722,6 +785,7 @@ export async function renewLease(
   input: LeaseRenewInput,
 ): Promise<string> {
   assertCapability(actor, "manage_leases");
+  const accountId = requireAccount(actor);
 
   const db = adminDb();
   const sourceRef = db.collection(COLLECTION).doc(leaseId);
@@ -736,6 +800,9 @@ export async function renewLease(
     }
 
     const source = sourceSnapshot.data() as Lease;
+    if (source.accountId !== accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this lease.");
+    }
     assertPropertyAccess(actor, source.propertyId);
 
     if (source.status !== "active") {
@@ -754,6 +821,7 @@ export async function renewLease(
     }
 
     tx.set(ref, {
+      accountId,
       tenantId: source.tenantId,
       unitId: source.unitId,
       propertyId: source.propertyId,
@@ -770,6 +838,7 @@ export async function renewLease(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "lease.renewed",
@@ -801,8 +870,10 @@ export async function getOpenLeaseForUnit(
   actor: SessionUser,
   unitId: string,
 ): Promise<LeaseListItem | null> {
+  const accountId = requireAccount(actor);
   const snapshot = await adminDb()
     .collection(COLLECTION)
+    .where("accountId", "==", accountId)
     .where("unitId", "==", unitId)
     .where("status", "in", ["pending", "active"])
     .limit(1)
@@ -816,6 +887,6 @@ export async function getOpenLeaseForUnit(
     assertPropertyAccess(actor, lease.propertyId);
   }
 
-  const [item] = await decorate([doc]);
+  const [item] = await decorate(actor.accountId, [doc]);
   return item;
 }

@@ -3,7 +3,12 @@ import "server-only";
 import { FieldPath, FieldValue } from "firebase-admin/firestore";
 
 import { writeAuditLog } from "@/lib/audit";
-import { assertCapability, chunkIn, scopePropertyIds } from "@/lib/auth/scope";
+import {
+  assertCapability,
+  chunkIn,
+  requireAccount,
+  scopePropertyIds,
+} from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
 import {
   BANK_IMPORT_PREVIEW_ROWS,
@@ -64,7 +69,10 @@ function tenantPropertyId(tenant: Tenant): string | undefined {
   return tenant.currentPropertyId ?? tenant.propertyIds?.[0];
 }
 
-async function loadPhoneIndex(phones: string[]): Promise<Map<string, string>> {
+async function loadPhoneIndex(
+  accountId: string,
+  phones: string[],
+): Promise<Map<string, string>> {
   const unique = [...new Set(phones.filter(Boolean))];
   const result = new Map<string, string>();
   if (unique.length === 0) return result;
@@ -73,13 +81,14 @@ async function loadPhoneIndex(phones: string[]): Promise<Map<string, string>> {
   for (let index = 0; index < unique.length; index += READ_BATCH) {
     const refs = unique
       .slice(index, index + READ_BATCH)
-      .map((phone) => db.collection(PHONE_INDEX).doc(phone));
+      // Decision E: phone index ids are `{accountId}_{phone}`.
+      .map((phone) => db.collection(PHONE_INDEX).doc(`${accountId}_${phone}`));
     const snapshots = await db.getAll(...refs);
     snapshots.forEach((snapshot) => {
       if (!snapshot.exists) return;
       const data = snapshot.data() as { tenantId?: string; active?: boolean };
       if (data.active === true && data.tenantId) {
-        result.set(snapshot.id, data.tenantId);
+        result.set(snapshot.id.replace(`${accountId}_`, ""), data.tenantId);
       }
     });
   }
@@ -87,7 +96,10 @@ async function loadPhoneIndex(phones: string[]): Promise<Map<string, string>> {
   return result;
 }
 
-async function loadTenants(ids: string[]): Promise<Map<string, Tenant>> {
+async function loadTenants(
+  accountId: string,
+  ids: string[],
+): Promise<Map<string, Tenant>> {
   const unique = [...new Set(ids.filter(Boolean))];
   const result = new Map<string, Tenant>();
   if (unique.length === 0) return result;
@@ -96,6 +108,7 @@ async function loadTenants(ids: string[]): Promise<Map<string, Tenant>> {
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection(TENANT_COLLECTION)
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -270,8 +283,10 @@ async function classify(
   actor: SessionUser,
   parsed: ParsedBankStatement,
 ): Promise<ClassifiedRow[]> {
+  const accountId = requireAccount(actor);
   const [tenantByPhone, existingPaymentIds] = await Promise.all([
     loadPhoneIndex(
+      accountId,
       parsed.rows.flatMap((row) => (row.payerPhone ? [row.payerPhone] : [])),
     ),
     loadExistingPaymentIds(
@@ -279,7 +294,7 @@ async function classify(
     ),
   ]);
 
-  const tenants = await loadTenants([...tenantByPhone.values()]);
+  const tenants = await loadTenants(accountId, [...tenantByPhone.values()]);
   return classifyRows(actor, parsed, tenantByPhone, tenants, existingPaymentIds);
 }
 
@@ -369,6 +384,7 @@ export async function commitBankStatement(
 ): Promise<BankImportResult> {
   assertCapability(actor, "enter_manual_receipts");
   assertCapability(actor, "reconcile_payments");
+  const accountId = requireAccount(actor);
 
   const parsed = parse(input);
   const classified = await classify(actor, parsed);
@@ -386,6 +402,7 @@ export async function commitBankStatement(
   let errorSample: string | undefined;
 
   await runRef.set({
+    accountId,
     bankCode: input.bankCode,
     ...(input.fileName ? { fileName: input.fileName } : {}),
     source: "statement",
@@ -466,6 +483,7 @@ export async function commitBankStatement(
       });
 
       writeAuditLog(tx, {
+        accountId,
         actorUid: actor.uid,
         actorRole: actor.role,
         action: "bank_import.committed",
@@ -517,9 +535,11 @@ export async function listRecentBankImports(
   limit = 10,
 ): Promise<BankImportRunItem[]> {
   assertCapability(actor, "reconcile_payments");
+  const accountId = requireAccount(actor);
 
   const snapshot = await adminDb()
     .collection(RUN_COLLECTION)
+    .where("accountId", "==", accountId)
     .orderBy("startedAt", "desc")
     .limit(Math.min(Math.max(limit, 1), 25))
     .get();

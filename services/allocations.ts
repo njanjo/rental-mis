@@ -7,7 +7,7 @@ import {
 
 import { planAllocation } from "@/lib/allocation";
 import { writeAuditLog } from "@/lib/audit";
-import { assertCapability, scopePropertyIds } from "@/lib/auth/scope";
+import { assertCapability, requireAccount, scopePropertyIds } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
 import { statusForBalance } from "@/lib/billing";
 import { ServiceError } from "@/lib/errors";
@@ -102,12 +102,14 @@ export async function allocateWithinTransaction(
   assertCapability(actor, "reconcile_payments");
   validateTarget(target);
 
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   const db = adminDb();
 
   const alreadyAllocated = await tx.get(
     db
       .collection(ALLOCATION_COLLECTION)
+      .where("accountId", "==", accountId)
       .where("paymentId", "==", target.paymentId)
       .limit(1),
   );
@@ -124,6 +126,12 @@ export async function allocateWithinTransaction(
     throw new ServiceError("not_found", "That tenant no longer exists.");
   }
   const tenant = tenantSnapshot.data() as Tenant;
+  if (tenant.accountId !== accountId) {
+    throw new ServiceError(
+      "forbidden",
+      "You do not have access to this tenant.",
+    );
+  }
 
   if (scope) {
     const inScope = tenantPropertyIds(tenant).some((id) => scope.includes(id));
@@ -138,6 +146,7 @@ export async function allocateWithinTransaction(
   const invoiceSnapshot = await tx.get(
     db
       .collection(INVOICE_COLLECTION)
+      .where("accountId", "==", accountId)
       .where("tenantId", "==", target.tenantId)
       .where("status", "in", [...ALLOCATABLE_STATUSES])
       .orderBy("dueDate", "asc")
@@ -179,6 +188,7 @@ export async function allocateWithinTransaction(
         .collection(ALLOCATION_COLLECTION)
         .doc(`${target.paymentId}_${line.invoiceId}`),
       {
+        accountId,
         paymentId: target.paymentId,
         invoiceId: line.invoiceId,
         amountMinor: line.amountMinor,
@@ -208,6 +218,7 @@ export async function allocateWithinTransaction(
     });
 
     writeAuditLog(tx, {
+      accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "tenant.credit_added",
@@ -220,6 +231,7 @@ export async function allocateWithinTransaction(
   }
 
   writeAuditLog(tx, {
+    accountId,
     actorUid: actor.uid,
     actorRole: actor.role,
     action: "payment.allocated",

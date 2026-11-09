@@ -17,6 +17,7 @@ import {
 } from "@/services/maintenance";
 
 const db = () => adminDb();
+const ACCOUNT = "acc_demo";
 
 function actor(
   role: Role,
@@ -28,6 +29,7 @@ function actor(
     email: `${uid}@rentalmis.test`,
     fullName: uid,
     role,
+    accountId: ACCOUNT,
     active: true,
     propertyIds,
   };
@@ -77,6 +79,7 @@ async function seedUser(user: SessionUser, overrides: Record<string, unknown> = 
     .set({
       uid: user.uid,
       fullName: user.fullName,
+      accountId: ACCOUNT,
       email: user.email,
       role: user.role,
       propertyIds: user.propertyIds,
@@ -95,6 +98,7 @@ async function seedProperty(
     .collection("properties")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       name: id,
       nameLower: id.toLowerCase(),
       address: "Test address",
@@ -115,6 +119,7 @@ async function seedUnit(
     .collection("units")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       propertyId: "prop_1",
       unitNumber: id.toUpperCase(),
       rentAmountMinor: 4_500_000,
@@ -136,6 +141,7 @@ async function seedRequest(
     .collection("maintenanceRequests")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       propertyId: "prop_1",
       unitId: "unit_1",
       title: "Leaking kitchen sink",

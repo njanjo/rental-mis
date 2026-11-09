@@ -137,9 +137,11 @@ export default async function MaintenancePage({
           throw error;
         })
       : Promise.resolve([]),
-    listStaffOptions(["admin", "property_manager", "maintenance"]).catch(
-      () => [],
-    ),
+    listStaffOptions(user.accountId, [
+      "admin",
+      "property_manager",
+      "maintenance",
+    ]).catch(() => []),
     listMaintenance(user, {
       q,
       propertyId,

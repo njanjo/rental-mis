@@ -141,7 +141,7 @@ export default async function PropertiesPage({
       throw error;
     }),
     canManage
-      ? listStaffOptions(["property_manager", "admin"])
+      ? listStaffOptions(user.accountId, ["property_manager", "admin"])
       : Promise.resolve([]),
   ]);
 

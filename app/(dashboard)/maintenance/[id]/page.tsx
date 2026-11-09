@@ -61,9 +61,13 @@ export default async function MaintenanceDetailPage({
 
   const staffOptions = isClosed
     ? []
-    : await listStaffOptions(["admin", "property_manager", "maintenance"], {
-        propertyId: request.propertyId,
-      });
+    : await listStaffOptions(
+        user.accountId,
+        ["admin", "property_manager", "maintenance"],
+        {
+          propertyId: request.propertyId,
+        },
+      );
 
   return (
     <>

@@ -14,6 +14,7 @@ import {
 } from "@/services/bank-import";
 
 const db = () => adminDb();
+const ACCOUNT = "acc_demo";
 const HEADER = "Date,Reference,Description,Credit,Debit,Phone";
 
 function actor(
@@ -26,6 +27,7 @@ function actor(
     email: `${uid}@rentalmis.test`,
     fullName: uid,
     role,
+    accountId: ACCOUNT,
     active: true,
     propertyIds,
   };
@@ -64,6 +66,7 @@ async function seedProperty(id: string, name: string): Promise<void> {
     .collection("properties")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       name,
       nameLower: name.toLowerCase(),
       address: "Test address",
@@ -80,6 +83,7 @@ async function seedUnit(id: string, propertyId: string): Promise<void> {
     .collection("units")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       propertyId,
       unitNumber: id.toUpperCase(),
       rentAmountMinor: 4_500_000,
@@ -111,6 +115,7 @@ async function seedTenant(
     .collection("tenants")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       fullName: options.fullName ?? "Grace Wanjiru",
       fullNameLower: (options.fullName ?? "Grace Wanjiru").toLowerCase(),
       phoneE164: phone,
@@ -125,8 +130,9 @@ async function seedTenant(
 
   await db()
     .collection("tenantPhones")
-    .doc(phone)
+    .doc(`${ACCOUNT}_${phone}`)
     .set({
+      accountId: ACCOUNT,
       tenantId: id,
       active: options.indexActive ?? true,
       createdAt: FieldValue.serverTimestamp(),
@@ -143,6 +149,7 @@ async function seedInvoice(
     .collection("invoices")
     .doc(id)
     .set({
+      accountId: ACCOUNT,
       tenantId,
       leaseId: `lease_${tenantId}`,
       unitId: `unit_${tenantId}`,
@@ -454,6 +461,7 @@ describe("listRecentBankImports", () => {
       .collection("bankSyncRuns")
       .doc("run_api")
       .set({
+        accountId: ACCOUNT,
         bankCode: "EQ",
         source: "api",
         status: "succeeded",

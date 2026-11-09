@@ -11,12 +11,14 @@
  *
  *   npx tsx scripts/provision-staff.ts \
  *     --project rental-mis-prod --confirm \
+ *     --account acc_rentals_first \
  *     --email you@example.com --name "Michael Njanjo" \
  *     --role admin
  *
  *   # rehearsal against local emulators (hosts are auto-set for demo-* ids):
  *   npx tsx scripts/provision-staff.ts \
  *     --project demo-rental-mis --confirm \
+ *     --account acc_demo \
  *     --email admin@rentalmis.test --name "Local Admin"
  *
  * --password omitted -> a strong password is generated and printed ONCE.
@@ -39,6 +41,7 @@ const PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz2345
 type Flags = {
   project?: string;
   confirm: boolean;
+  account?: string;
   email?: string;
   name?: string;
   role: Role;
@@ -59,6 +62,7 @@ function parseFlags(argv: string[]): Flags {
     switch (key) {
       case "--project": flags.project = value; break;
       case "--confirm": flags.confirm = true; break;
+      case "--account": flags.account = value; break;
       case "--email": flags.email = value; break;
       case "--name": flags.name = value; break;
       case "--role": flags.role = (value ?? "admin") as Role; break;
@@ -84,7 +88,8 @@ function fail(message: string): never {
 const __usage =
   "\nUsage:\n" +
   "  npx tsx scripts/provision-staff.ts --project <project-id> --confirm \\\n" +
-  "    --email <email> --name \"Full Name\" [--role admin] [--property id1,id2] [--password <pw>] [--phone +254712345678 (optional)] [--env-file <file>]\n";
+  "    --account <accountId> --email <email> --name \"Full Name\" [--role admin] [--property id1,id2] [--password <pw>] [--phone +254712345678 (optional)] [--env-file <file>]\n" +
+  "\n  --account must name an existing accounts/{id} document (see scripts/seed.ts).\n";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -129,6 +134,9 @@ if (!flags.confirm) {
 }
 if (!flags.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flags.email)) {
   fail("A valid --email is required.");
+}
+if (!flags.account) {
+  fail("--account <accountId> is required. Staff always belong to one customer account.");
 }
 if (!flags.name) {
     fail("--name \"Full Name\" is required (it becomes the users doc fullName).");
@@ -228,6 +236,7 @@ let existed = false;
 
 const preview = {
   project: projectId,
+  account: flags.account,
   email: flags.email,
   name: flags.name,
   role: flags.role,
@@ -244,6 +253,18 @@ if (!flags.password) {
 }
 
 async function main(): Promise<void> {
+  // 0. The account must exist; staff never float between customers.
+  const accountSnapshot = await db
+    .collection("accounts")
+    .doc(flags.account!)
+    .get();
+  if (!accountSnapshot.exists) {
+    fail(
+      `accounts/${flags.account} does not exist in "${projectId}". ` +
+        "Create it first (or run scripts/migrate-to-accounts.ts / scripts/seed.ts).",
+    );
+  }
+
   // 1. Auth user — create or update, mirroring the seed's upsert.
   let uid: string;
   try {
@@ -275,6 +296,7 @@ async function main(): Promise<void> {
   await db.collection("users").doc(uid).set(
     {
       uid,
+      accountId: flags.account,
       fullName: flags.name,
       email: flags.email,
       role: flags.role,
@@ -290,6 +312,7 @@ async function main(): Promise<void> {
 
   // 4. Audit trail — no change without one (docs/DECISIONS.md).
   await db.collection("auditLogs").add({
+    accountId: flags.account,
     actorUid: "bootstrap:provision-staff",
     actorRole: "admin",
     action: "staff.provisioned",

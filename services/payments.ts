@@ -15,6 +15,7 @@ import {
   assertCapability,
   assertPropertyAccess,
   chunkIn,
+  requireAccount,
   scopePropertyIds,
 } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
@@ -144,6 +145,7 @@ interface TenantSummary {
 }
 
 async function tenantsById(
+  accountId: string,
   ids: string[],
 ): Promise<Record<string, TenantSummary>> {
   const unique = [...new Set(ids.filter(Boolean))];
@@ -155,6 +157,7 @@ async function tenantsById(
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection(TENANT_COLLECTION)
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -169,15 +172,19 @@ async function tenantsById(
   return result;
 }
 
-async function decorate(docs: DocumentSnapshot[]): Promise<PaymentListItem[]> {
+async function decorate(
+  accountId: string,
+  docs: DocumentSnapshot[],
+): Promise<PaymentListItem[]> {
   if (docs.length === 0) return [];
 
   const rows = docs.map((doc) => ({ id: doc.id, data: doc.data() as Payment }));
 
   const [propertyNames, tenants, staffNames] = await Promise.all([
-    getPropertyNames(rows.map((row) => row.data.propertyId ?? "")),
-    tenantsById(rows.map((row) => row.data.tenantId ?? "")),
+    getPropertyNames(accountId, rows.map((row) => row.data.propertyId ?? "")),
+    tenantsById(accountId, rows.map((row) => row.data.tenantId ?? "")),
     getStaffNames(
+      accountId,
       rows.flatMap((row) => [
         row.data.confirmedBy ?? "",
         row.data.reversedBy ?? "",
@@ -232,6 +239,7 @@ export async function listPayments(
 ): Promise<PageResult<PaymentListItem>> {
   assertCapability(actor, "view_financials");
 
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   if (params.propertyId) assertPropertyAccess(actor, params.propertyId);
 
@@ -243,7 +251,10 @@ export async function listPayments(
     params.provider && params.provider !== "all" ? params.provider : undefined;
 
   const db = adminDb();
-  let base = db.collection(COLLECTION).orderBy("receivedAt", "desc");
+  let base = db
+    .collection(COLLECTION)
+    .where("accountId", "==", accountId)
+    .orderBy("receivedAt", "desc");
   let scopeFallback: string[] | null = null;
 
   if (params.propertyId) {
@@ -263,7 +274,7 @@ export async function listPayments(
 
   if (inMemory) {
     const snapshot = await base.limit(SEARCH_LIMIT).get();
-    let rows = await decorate(snapshot.docs);
+    let rows = await decorate(accountId, snapshot.docs);
     if (scopeFallback) {
       rows = rows.filter((row) => inScope(scopeFallback, row.propertyId));
     }
@@ -297,17 +308,19 @@ export async function listPayments(
   if (hasMore) docs = docs.slice(0, pageSize);
 
   return {
-    items: await decorate(docs),
+    items: await decorate(accountId, docs),
     nextCursor: hasMore ? docs[docs.length - 1]?.id ?? null : null,
   };
 }
 
 async function allocationsForPayment(
+  accountId: string,
   paymentId: string,
 ): Promise<PaymentAllocationLine[]> {
   const db = adminDb();
   const snapshot = await db
     .collection(ALLOCATION_COLLECTION)
+    .where("accountId", "==", accountId)
     .where("paymentId", "==", paymentId)
     .orderBy("createdAt", "asc")
     .get();
@@ -323,6 +336,7 @@ async function allocationsForPayment(
   for (const chunk of chunkIn(allocations.map((row) => row.data.invoiceId))) {
     const invoiceSnapshot = await db
       .collection(INVOICE_COLLECTION)
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     invoiceSnapshot.docs.forEach((doc) => {
@@ -359,20 +373,26 @@ export async function getPayment(
 ): Promise<PaymentDetail> {
   assertCapability(actor, "view_financials");
 
+  const accountId = requireAccount(actor);
+
   const snapshot = await adminDb().collection(COLLECTION).doc(paymentId).get();
   if (!snapshot.exists) {
     throw new ServiceError("not_found", "Payment not found.");
   }
 
   const payment = snapshot.data() as Payment;
+  if (payment.accountId !== accountId) {
+    throw new ServiceError("not_found", "Payment not found.");
+  }
   assertPaymentAccess(actor, payment);
 
   const [item, allocations, reversal] = await Promise.all([
-    decorate([snapshot]),
-    allocationsForPayment(paymentId),
+    decorate(accountId, [snapshot]),
+    allocationsForPayment(accountId, paymentId),
     payment.status === "reversed"
       ? adminDb()
           .collection(COLLECTION)
+          .where("accountId", "==", accountId)
           .where("reversalOfPaymentId", "==", paymentId)
           .limit(1)
           .get()
@@ -447,6 +467,8 @@ export async function confirmPaymentWithinTransaction(
   actor: SessionUser,
   input: ConfirmedPaymentInput,
 ): Promise<PaymentWriteResult | undefined> {
+  const accountId = requireAccount(actor);
+
   const paymentId = paymentIdForReference(
     input.provider,
     input.providerTransactionId,
@@ -480,6 +502,9 @@ export async function confirmPaymentWithinTransaction(
     throw new ServiceError("not_found", "That tenant no longer exists.");
   }
   const tenant = tenantSnapshot.data() as Tenant;
+  if (tenant.accountId !== accountId) {
+    throw new ServiceError("not_found", "That tenant no longer exists.");
+  }
   assertTenantAccess(actor, tenant);
 
   const propertyId = tenantPropertyId(tenant);
@@ -499,6 +524,7 @@ export async function confirmPaymentWithinTransaction(
   });
 
   tx.set(paymentRef, {
+    accountId,
     provider: input.provider,
     providerTransactionId: input.providerTransactionId,
     amountMinor: input.amountMinor,
@@ -525,6 +551,7 @@ export async function confirmPaymentWithinTransaction(
   // failures are swallowed so money always lands first.
   if (tenant.consentSms === true && tenant.phoneE164) {
     enqueueSmsWithinTransaction(tx, {
+      accountId: actor.accountId,
       phoneE164: tenant.phoneE164,
       templateKey: "payment_receipt",
       reference: input.providerTransactionId,
@@ -536,6 +563,7 @@ export async function confirmPaymentWithinTransaction(
   }
 
   writeAuditLog(tx, {
+    accountId,
     actorUid: actor.uid,
     actorRole: actor.role,
     action: input.auditAction ?? "payment.recorded",
@@ -611,6 +639,8 @@ export async function queueUnmatchedWithinTransaction(
   actor: SessionUser,
   input: UnmatchedPaymentInput,
 ): Promise<QueuedPaymentResult> {
+  const accountId = requireAccount(actor);
+
   const paymentId = paymentIdForReference(
     input.provider,
     input.providerTransactionId,
@@ -636,6 +666,7 @@ export async function queueUnmatchedWithinTransaction(
   }
 
   tx.set(paymentRef, {
+    accountId,
     provider: input.provider,
     providerTransactionId: input.providerTransactionId,
     amountMinor: input.amountMinor,
@@ -652,6 +683,7 @@ export async function queueUnmatchedWithinTransaction(
   });
 
   tx.set(unmatchedRef, {
+    accountId,
     paymentId,
     candidateTenantIds: input.candidateTenantIds ?? [],
     reason: input.reason,
@@ -660,6 +692,7 @@ export async function queueUnmatchedWithinTransaction(
   });
 
   writeAuditLog(tx, {
+    accountId: actor.accountId,
     actorUid: actor.uid,
     actorRole: actor.role,
     action: "payment.queued_unmatched",
@@ -743,6 +776,7 @@ export async function reversePayment(
   reason: string,
 ): Promise<string> {
   assertCapability(actor, "approve_reversals");
+  const accountId = requireAccount(actor);
 
   const db = adminDb();
   const paymentRef = db.collection(COLLECTION).doc(paymentId);
@@ -860,6 +894,7 @@ export async function reversePayment(
 
     // Writes start here. Every read above is complete.
     tx.create(db.collection(COLLECTION).doc(reversalId), {
+      accountId,
       provider: payment.provider,
       providerTransactionId: `REV-${payment.providerTransactionId}`,
       amountMinor: -reversedAmountMinor,
@@ -890,6 +925,7 @@ export async function reversePayment(
           .collection(ALLOCATION_COLLECTION)
           .doc(`${reversalId}_${line.id}`),
         {
+          accountId,
           paymentId: reversalId,
           invoiceId: line.id,
           amountMinor: -line.amountMinor,
@@ -920,6 +956,7 @@ export async function reversePayment(
         updatedAt: FieldValue.serverTimestamp(),
       });
       writeAuditLog(tx, {
+        accountId: actor.accountId,
         actorUid: actor.uid,
         actorRole: actor.role,
         action: "tenant.credit_reversed",
@@ -944,6 +981,7 @@ export async function reversePayment(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "payment.reversed",
@@ -973,6 +1011,7 @@ interface UnmatchedRow {
 }
 
 async function decorateUnmatched(
+  accountId: string,
   rows: UnmatchedRow[],
 ): Promise<UnmatchedPaymentListItem[]> {
   if (rows.length === 0) return [];
@@ -991,9 +1030,10 @@ async function decorateUnmatched(
 
   const [candidateTenants, staffNames] = await Promise.all([
     tenantsById(
+      accountId,
       rows.flatMap((row) => row.data.candidateTenantIds ?? []),
     ),
-    getStaffNames(rows.map((row) => row.data.reviewedBy ?? "")),
+    getStaffNames(accountId, rows.map((row) => row.data.reviewedBy ?? "")),
   ]);
 
   return rows.map(({ id, data }) => {
@@ -1030,9 +1070,11 @@ async function decorateUnmatched(
 /** Count of payments still waiting for a human decision. */
 export async function countOpenUnmatched(actor: SessionUser): Promise<number> {
   assertCapability(actor, "reconcile_payments");
+  const accountId = requireAccount(actor);
 
   const snapshot = await adminDb()
     .collection(UNMATCHED_COLLECTION)
+    .where("accountId", "==", accountId)
     .where("reviewStatus", "in", ["pending", "assigned"])
     .count()
     .get();
@@ -1050,6 +1092,7 @@ export async function listUnmatched(
   actor: SessionUser,
   params: ListUnmatchedParams = {},
 ): Promise<PageResult<UnmatchedPaymentListItem>> {
+  const accountId = requireAccount(actor);
   assertCapability(actor, "reconcile_payments");
 
   const pageSize = clampPageSize(params.pageSize);
@@ -1057,11 +1100,13 @@ export async function listUnmatched(
 
   const snapshot = await adminDb()
     .collection(UNMATCHED_COLLECTION)
+    .where("accountId", "==", accountId)
     .orderBy("createdAt", "desc")
     .limit(Math.max(pageSize, SEARCH_LIMIT))
     .get();
 
   let items = await decorateUnmatched(
+    accountId,
     snapshot.docs.map((doc) => ({
       id: doc.id,
       data: doc.data() as UnmatchedPayment,
@@ -1163,6 +1208,7 @@ export async function resolveUnmatched(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "unmatched.resolved",
@@ -1213,6 +1259,7 @@ export async function ignoreUnmatched(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "unmatched.ignored",

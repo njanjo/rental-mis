@@ -12,6 +12,7 @@ import {
   assertCapability,
   assertPropertyAccess,
   chunkIn,
+  requireAccount,
   scopePropertyIds,
 } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
@@ -51,11 +52,15 @@ function inScope(scope: string[] | null, propertyId: string): boolean {
 }
 
 function buildQuery(
+  accountId: string,
   scope: string[] | null,
   params: ListUnitsParams,
 ): { query: Query; scopeChunked: boolean } {
   const db = adminDb();
-  let query: Query = db.collection(COLLECTION).orderBy("unitNumber");
+  let query: Query = db
+    .collection(COLLECTION)
+    .where("accountId", "==", accountId)
+    .orderBy("unitNumber");
   let scopeChunked = false;
 
   if (params.propertyId) {
@@ -92,6 +97,7 @@ async function applyCursor(query: Query, cursor?: string): Promise<Query> {
 }
 
 async function tenantDetails(
+  accountId: string,
   ids: string[],
 ): Promise<Record<string, { name: string; phone: string }>> {
   const unique = [...new Set(ids.filter(Boolean))];
@@ -103,6 +109,7 @@ async function tenantDetails(
   for (const chunk of chunkIn(unique)) {
     const snapshot = await db
       .collection("tenants")
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -117,13 +124,16 @@ async function tenantDetails(
   return result;
 }
 
-async function decorate(docs: QueryDocumentSnapshot[]): Promise<UnitListItem[]> {
+async function decorate(
+  accountId: string,
+  docs: QueryDocumentSnapshot[],
+): Promise<UnitListItem[]> {
   if (docs.length === 0) return [];
 
   const rows = docs.map((doc) => ({ id: doc.id, data: doc.data() as Unit }));
   const [propertyNames, tenants] = await Promise.all([
-    getPropertyNames(rows.map((row) => row.data.propertyId)),
-    tenantDetails(rows.map((row) => row.data.activeTenantId ?? "")),
+    getPropertyNames(accountId, rows.map((row) => row.data.propertyId)),
+    tenantDetails(accountId, rows.map((row) => row.data.activeTenantId ?? "")),
   ]);
 
   return rows.map(({ id, data }) => {
@@ -154,16 +164,17 @@ export async function listUnits(
   actor: SessionUser,
   params: ListUnitsParams = {},
 ): Promise<PageResult<UnitListItem>> {
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   if (params.propertyId) assertPropertyAccess(actor, params.propertyId);
 
   const pageSize = clampPageSize(params.pageSize);
   const q = params.q?.trim().toLowerCase() ?? "";
-  const { query: base, scopeChunked } = buildQuery(scope, params);
+  const { query: base, scopeChunked } = buildQuery(accountId, scope, params);
 
   if (q) {
     const snapshot = await base.limit(SEARCH_LIMIT).get();
-    let rows = await decorate(snapshot.docs);
+    let rows = await decorate(accountId, snapshot.docs);
     if (scopeChunked && scope) {
       rows = rows.filter((row) => inScope(scope, row.propertyId));
     }
@@ -182,7 +193,7 @@ export async function listUnits(
   const hasMore = docs.length > pageSize;
   if (hasMore) docs = docs.slice(0, pageSize);
 
-  let items = await decorate(docs);
+  let items = await decorate(accountId, docs);
   if (scopeChunked && scope) {
     items = items.filter((row) => inScope(scope, row.propertyId));
   }
@@ -203,9 +214,15 @@ export async function getUnit(
   }
 
   const data = snapshot.data() as Unit;
+  if (data.accountId !== actor.accountId) {
+    throw new ServiceError("not_found", "Unit not found.");
+  }
   assertPropertyAccess(actor, data.propertyId);
 
-  const [item] = await decorate([snapshot as QueryDocumentSnapshot]);
+  const [item] = await decorate(
+    actor.accountId,
+    [snapshot as QueryDocumentSnapshot],
+  );
   return item;
 }
 
@@ -220,6 +237,7 @@ export async function getUnitLeaseHistory(
 
   const snapshot = await adminDb()
     .collection("leases")
+    .where("accountId", "==", actor.accountId)
     .where("unitId", "==", unitId)
     .orderBy("startDate", "desc")
     .limit(limit)
@@ -228,6 +246,7 @@ export async function getUnitLeaseHistory(
   if (snapshot.empty) return [];
 
   const tenants = await tenantDetails(
+    actor.accountId,
     snapshot.docs.map((doc) => doc.data().tenantId as string),
   );
 
@@ -249,10 +268,11 @@ export async function getUnitOptions(
   actor: SessionUser,
   options: { propertyId?: string; includeOccupied?: boolean } = {},
 ): Promise<UnitOption[]> {
+  const accountId = requireAccount(actor);
   const scope = scopePropertyIds(actor);
   if (options.propertyId) assertPropertyAccess(actor, options.propertyId);
 
-  const { query } = buildQuery(scope, {
+  const { query } = buildQuery(accountId, scope, {
     propertyId: options.propertyId,
     status: options.includeOccupied ? undefined : "vacant",
   });
@@ -262,6 +282,7 @@ export async function getUnitOptions(
     .filter((row) => inScope(scope, row.data.propertyId));
 
   const propertyNames = await getPropertyNames(
+    accountId,
     units.map((row) => row.data.propertyId),
   );
 
@@ -282,10 +303,16 @@ export async function getUnitOptions(
     );
 }
 
-async function assertPropertyActive(propertyId: string): Promise<void> {
+async function assertPropertyActive(
+  accountId: string,
+  propertyId: string,
+): Promise<void> {
   const snapshot = await adminDb().collection("properties").doc(propertyId).get();
   if (!snapshot.exists) {
     throw new ServiceError("not_found", "Property not found.");
+  }
+  if (snapshot.data()?.accountId !== accountId) {
+    throw new ServiceError("forbidden", "You do not have access to this property.");
   }
   if (!snapshot.data()?.active) {
     throw new ServiceError(
@@ -310,7 +337,7 @@ export async function createUnit(
     );
   }
 
-  await assertPropertyActive(input.propertyId);
+  await assertPropertyActive(actor.accountId, input.propertyId);
 
   const unitNumber = input.unitNumber.trim().toUpperCase();
   const db = adminDb();
@@ -320,6 +347,7 @@ export async function createUnit(
     const duplicate = await tx.get(
       db
         .collection(COLLECTION)
+        .where("accountId", "==", actor.accountId)
         .where("propertyId", "==", input.propertyId)
         .where("unitNumber", "==", unitNumber)
         .where("active", "==", true)
@@ -334,6 +362,7 @@ export async function createUnit(
     }
 
     tx.set(ref, {
+      accountId: actor.accountId,
       propertyId: input.propertyId,
       unitNumber,
       rentAmountMinor: input.rentAmount,
@@ -347,6 +376,7 @@ export async function createUnit(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "unit.created",
@@ -382,6 +412,9 @@ export async function updateUnit(
     }
 
     const before = snapshot.data() as Unit;
+    if (before.accountId !== actor.accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this unit.");
+    }
     assertPropertyAccess(actor, before.propertyId);
 
     if (before.active === false) {
@@ -415,6 +448,7 @@ export async function updateUnit(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "unit.updated",
@@ -453,6 +487,9 @@ export async function archiveUnit(
     }
 
     const unit = snapshot.data() as Unit;
+    if (unit.accountId !== actor.accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this unit.");
+    }
     assertPropertyAccess(actor, unit.propertyId);
 
     if (unit.active === false) {
@@ -462,6 +499,7 @@ export async function archiveUnit(
     const openLeases = await tx.get(
       db
         .collection("leases")
+        .where("accountId", "==", actor.accountId)
         .where("unitId", "==", unitId)
         .where("status", "in", ["pending", "active"])
         .limit(1),
@@ -482,6 +520,7 @@ export async function archiveUnit(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "unit.archived",
@@ -511,6 +550,9 @@ export async function restoreUnit(
     }
 
     const unit = snapshot.data() as Unit;
+    if (unit.accountId !== actor.accountId) {
+      throw new ServiceError("forbidden", "You do not have access to this unit.");
+    }
     assertPropertyAccess(actor, unit.propertyId);
 
     if (unit.active !== false) {
@@ -520,6 +562,7 @@ export async function restoreUnit(
     const duplicate = await tx.get(
       db
         .collection(COLLECTION)
+        .where("accountId", "==", actor.accountId)
         .where("propertyId", "==", unit.propertyId)
         .where("unitNumber", "==", unit.unitNumber)
         .where("active", "==", true)
@@ -541,6 +584,7 @@ export async function restoreUnit(
     });
 
     writeAuditLog(tx, {
+      accountId: actor.accountId,
       actorUid: actor.uid,
       actorRole: actor.role,
       action: "unit.restored",

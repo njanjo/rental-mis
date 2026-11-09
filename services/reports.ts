@@ -19,7 +19,12 @@ import "server-only";
 import { FieldPath, Timestamp } from "firebase-admin/firestore";
 
 import type { SessionUser } from "@/lib/auth/session";
-import { assertCapability, scopePropertyIds } from "@/lib/auth/scope";
+import {
+  assertCapability,
+  hasGlobalScope,
+  requireAccount,
+  scopePropertyIds,
+} from "@/lib/auth/scope";
 import {
   monthBounds,
   nairobiMonthKey,
@@ -118,11 +123,13 @@ function toMillis(value: unknown): number {
 
 /** Payments received since `start`, scope-filtered in memory. */
 async function paymentsSince(
+  accountId: string,
   start: Date,
   scope: string[] | null,
 ): Promise<Payment[]> {
   const snapshot = await adminDb()
     .collection(PAYMENTS)
+    .where("accountId", "==", accountId)
     .where("receivedAt", ">=", Timestamp.fromDate(start))
     .limit(SCAN_LIMIT)
     .get();
@@ -131,9 +138,13 @@ async function paymentsSince(
     .filter((payment) => inScope(scope, payment.propertyId));
 }
 
-async function outstandingInvoices(scope: string[] | null): Promise<Invoice[]> {
+async function outstandingInvoices(
+  accountId: string,
+  scope: string[] | null,
+): Promise<Invoice[]> {
   const snapshot = await adminDb()
     .collection(INVOICES)
+    .where("accountId", "==", accountId)
     .where("status", "in", [...OUTSTANDING_STATUSES])
     .limit(SCAN_LIMIT)
     .get();
@@ -142,9 +153,13 @@ async function outstandingInvoices(scope: string[] | null): Promise<Invoice[]> {
     .filter((invoice) => inScope(scope, invoice.propertyId));
 }
 
-async function activeUnits(scope: string[] | null): Promise<Unit[]> {
+async function activeUnits(
+  accountId: string,
+  scope: string[] | null,
+): Promise<Unit[]> {
   const snapshot = await adminDb()
     .collection(UNITS)
+    .where("accountId", "==", accountId)
     .where("active", "==", true)
     .limit(SCAN_LIMIT)
     .get();
@@ -153,9 +168,13 @@ async function activeUnits(scope: string[] | null): Promise<Unit[]> {
     .filter((unit) => inScope(scope, unit.propertyId));
 }
 
-async function propertyNames(scope: string[] | null): Promise<Map<string, string>> {
+async function propertyNames(
+  accountId: string,
+  scope: string[] | null,
+): Promise<Map<string, string>> {
   const snapshot = await adminDb()
     .collection(PROPERTIES)
+    .where("accountId", "==", accountId)
     .limit(SCAN_LIMIT)
     .get();
   const map = new Map<string, string>();
@@ -166,13 +185,17 @@ async function propertyNames(scope: string[] | null): Promise<Map<string, string
   return map;
 }
 
-async function tenantNames(tenantIds: string[]): Promise<Map<string, string>> {
+async function tenantNames(
+  accountId: string,
+  tenantIds: string[],
+): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   const unique = [...new Set(tenantIds.filter(Boolean))];
   for (let index = 0; index < unique.length; index += 30) {
     const chunk = unique.slice(index, index + 30);
     const snapshot = await adminDb()
       .collection(TENANTS)
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     snapshot.docs.forEach((doc) => {
@@ -201,16 +224,18 @@ export async function dashboardStats(
 ): Promise<DashboardStats> {
   // Dashboard KPIs are financial figures; the view_financials matrix applies.
   const scope = assertAndScope(actor, "view_financials");
+  const accountId = requireAccount(actor);
 
   const now = new Date();
   const currentMonth = monthBounds(nairobiMonthKey(now));
 
   const [monthPayments, units, invoices, unmatchedSnapshot] = await Promise.all([
-    paymentsSince(currentMonth.start, scope),
-    activeUnits(scope),
-    outstandingInvoices(scope),
+    paymentsSince(accountId, currentMonth.start, scope),
+    activeUnits(accountId, scope),
+    outstandingInvoices(accountId, scope),
     adminDb()
       .collection("unmatchedPayments")
+      .where("accountId", "==", accountId)
       .where("reviewStatus", "in", ["pending", "assigned"])
       .limit(SCAN_LIMIT)
       .get(),
@@ -226,6 +251,7 @@ export async function dashboardStats(
     const chunk = queuePaymentIds.slice(index, index + 30);
     const docs = await adminDb()
       .collection(PAYMENTS)
+      .where("accountId", "==", accountId)
       .where(FieldPath.documentId(), "in", chunk)
       .get();
     docs.docs.forEach((doc) => {
@@ -274,6 +300,7 @@ export async function collectionTrend(
   months = 6,
 ): Promise<MonthPoint[]> {
   const scope = assertAndScope(actor, "view_financials");
+  const accountId = requireAccount(actor);
   const clamped = Math.min(Math.max(months, 1), 24);
 
   const currentKey = nairobiMonthKey(new Date());
@@ -288,7 +315,7 @@ export async function collectionTrend(
   }
   const first = monthBounds(keys[0]);
 
-  const payments = await paymentsSince(first.start, scope);
+  const payments = await paymentsSince(accountId, first.start, scope);
   const totals = new Map<string, number>(keys.map((k) => [k, 0]));
   for (const payment of payments) {
     if (!CASH_STATUSES.includes(payment.status)) continue;
@@ -307,7 +334,8 @@ export async function collectionTrend(
 /** Arrears by days past due: not yet due, 1–30, 31–60, 61–90, 90+. */
 export async function arrearsAging(actor: SessionUser): Promise<AgingBucket[]> {
   const scope = assertAndScope(actor, "view_financials");
-  const invoices = await outstandingInvoices(scope);
+  const accountId = requireAccount(actor);
+  const invoices = await outstandingInvoices(accountId, scope);
 
   const todayDays = Math.floor(Date.now() / 86_400_000);
   const buckets: AgingBucket[] = [
@@ -345,7 +373,8 @@ async function windowPayments(
   to: Date,
 ): Promise<Payment[]> {
   const scope = assertAndScope(actor, "export_reports");
-  const payments = await paymentsSince(from, scope);
+  const accountId = requireAccount(actor);
+  const payments = await paymentsSince(accountId, from, scope);
   const end = to.getTime();
   return payments.filter(
     (payment) =>
@@ -370,7 +399,7 @@ export async function incomeByProperty(
 ): Promise<NamedBreakdown[]> {
   const payments = await windowPayments(actor, from, to);
   const scope = hasGlobalScope(actor) ? null : [...new Set(actor.propertyIds)];
-  const names = await propertyNames(scope);
+  const names = await propertyNames(requireAccount(actor), scope);
 
   return groupTotals(payments, (payment) => payment.propertyId ?? "unassigned")
     .map(({ id, minor }) => ({
@@ -409,10 +438,6 @@ export async function incomeByMonth(
     .map(([key, minor]) => ({ key, label: monthLabel(key), minor }));
 }
 
-function hasGlobalScope(actor: SessionUser): boolean {
-  return actor.role === "admin" || actor.role === "auditor";
-}
-
 function groupTotals(
   payments: Payment[],
   keyOf: (payment: Payment) => string,
@@ -448,9 +473,13 @@ export async function paymentsForExport(
 ): Promise<PaymentExportRow[]> {
   const payments = await windowPayments(actor, from, to);
   const scope = hasGlobalScope(actor) ? null : [...new Set(actor.propertyIds)];
+  const accountId = requireAccount(actor);
   const [names, tenants] = await Promise.all([
-    propertyNames(scope),
-    tenantNames(payments.filter((p) => p.tenantId).map((p) => p.tenantId as string)),
+    propertyNames(accountId, scope),
+    tenantNames(
+      accountId,
+      payments.filter((p) => p.tenantId).map((p) => p.tenantId as string),
+    ),
   ]);
 
   return payments
@@ -485,12 +514,18 @@ export async function arrearsForExport(
   actor: SessionUser,
 ): Promise<ArrearsExportRow[]> {
   const scope = assertAndScope(actor, "export_reports");
+  const accountId = requireAccount(actor);
   const [invoices, names, unitsSnapshot] = await Promise.all([
-    outstandingInvoices(scope),
-    propertyNames(scope),
-    adminDb().collection(UNITS).limit(SCAN_LIMIT).get(),
+    outstandingInvoices(accountId, scope),
+    propertyNames(accountId, scope),
+    adminDb()
+      .collection(UNITS)
+      .where("accountId", "==", accountId)
+      .limit(SCAN_LIMIT)
+      .get(),
   ]);
   const tenantMap = await tenantNames(
+    accountId,
     invoices.filter((invoice) => invoice.tenantId).map((i) => i.tenantId),
   );
   const unitNumbers = new Map<string, string>();

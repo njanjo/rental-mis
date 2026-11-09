@@ -3,6 +3,11 @@ rules_version = '2';
 // Rental MIS — baseline security rules.
 // Trusted backend (Admin SDK) bypasses these rules; it must validate the actor
 // and input independently. Test every collection in the emulator.
+//
+// Multi-tenant notes (Phase 1): every data document carries `accountId`.
+// Client reads may only reach documents of the caller's own account. The
+// Admin SDK still does its own capability + property + account checks; these
+// rules remain the boundary for direct client access.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -17,7 +22,25 @@ service cloud.firestore {
     function activeUser() {
       return signedIn()
         && exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        && profile().active == true;
+        && profile().active == true
+        // A profile without an account can never read or write tenant data.
+        && profile().accountId != null
+        && profile().accountId != '';
+    }
+
+    /** The caller's own account id (empty string when unresolvable). */
+    function actorAccount() {
+      return activeUser() ? profile().accountId : '__none__';
+    }
+
+    /** The document belongs to the caller's account. */
+    function inAccount() {
+      return resource.data.accountId == actorAccount();
+    }
+
+    // The accounts collection itself: admins may see their own account doc.
+    function isOwnAccount() {
+      return request.auth.uid != null && resource.id == actorAccount();
     }
 
     function role() {
@@ -45,31 +68,37 @@ service cloud.firestore {
       return isAdmin() || isAuditor();
     }
 
+    match /accounts/{accountId} {
+      allow read: if isAdmin() && isOwnAccount();
+      allow write: if false; // provisioning happens through trusted backend only
+    }
+
     match /users/{uid} {
-      allow read: if activeUser() && (request.auth.uid == uid || isAdmin());
+      allow read: if activeUser()
+        && (request.auth.uid == uid || (isAdmin() && resource.data.accountId == actorAccount()));
       allow write: if false; // provision roles via trusted backend only
     }
 
     // Operations data is written exclusively through server actions using the
     // Admin SDK, which enforces capabilities, property scope and audit trails.
-    // Clients may only read.
+    // Clients may only read their own account's data.
     match /properties/{id} {
-      allow read: if activeUser();
+      allow read: if activeUser() && inAccount();
       allow write: if false;
     }
 
     match /units/{id} {
-      allow read: if activeUser();
+      allow read: if activeUser() && inAccount();
       allow write: if false;
     }
 
     match /tenants/{id} {
-      allow read: if activeUser();
+      allow read: if activeUser() && inAccount();
       allow write: if false;
     }
 
     match /leases/{id} {
-      allow read: if activeUser();
+      allow read: if activeUser() && inAccount();
       allow write: if false;
     }
 
@@ -78,22 +107,22 @@ service cloud.firestore {
     }
 
     match /invoices/{id} {
-      allow read: if activeUser();
+      allow read: if activeUser() && inAccount();
       allow write: if false; // trusted reconciliation / billing jobs only
     }
 
     match /payments/{id} {
-      allow read: if canViewFinance();
+      allow read: if canViewFinance() && inAccount();
       allow write: if false;
     }
 
     match /paymentAllocations/{id} {
-      allow read: if canViewFinance();
+      allow read: if canViewFinance() && inAccount();
       allow write: if false;
     }
 
     match /unmatchedPayments/{id} {
-      allow read: if canViewFinance();
+      allow read: if canViewFinance() && inAccount();
       allow write: if false;
     }
 
@@ -102,37 +131,37 @@ service cloud.firestore {
     }
 
     match /mpesaStkRequests/{id} {
-      allow read: if canViewFinance();
+      allow read: if canViewFinance() && inAccount();
       allow write: if false;
     }
 
     match /smsOutbox/{id} {
-      allow read: if isFinance();
+      allow read: if isFinance() && inAccount();
       allow write: if false;
     }
 
     match /smsLogs/{id} {
-      allow read: if isFinance();
+      allow read: if isFinance() && inAccount();
       allow write: if false;
     }
 
     match /auditLogs/{id} {
-      allow read: if canViewAudit();
+      allow read: if canViewAudit() && inAccount();
       allow write: if false;
     }
 
     match /bankSyncRuns/{id} {
-      allow read: if canViewFinance();
+      allow read: if canViewFinance() && inAccount();
       allow write: if false;
     }
 
     match /maintenanceRequests/{id} {
-      allow read: if activeUser();
+      allow read: if activeUser() && inAccount();
       allow write: if false; // service enforces transitions and assignment
     }
 
     match /systemSettings/{id} {
-      allow read: if isAdmin();
+      allow read: if isAdmin() && resource.id == actorAccount();
       allow write: if false;
     }
 
