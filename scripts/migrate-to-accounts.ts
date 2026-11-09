@@ -523,6 +523,16 @@ async function main(): Promise<void> {
     },
   ]);
 
+  if (flags.dryRun) {
+    if (unattributed > 0) {
+      console.log(
+        `\nℹ Dry run: ${unattributed} document(s) would gain accountId "${ACCOUNT_ID}" on apply.`,
+      );
+    }
+    console.log("Dry run complete. Re-run with --confirm to apply.\n");
+    return;
+  }
+
   if (unattributed > 0) {
     console.error(
       `\n✗ Verification failed: ${unattributed} document(s) still lack accountId "${ACCOUNT_ID}".`,
@@ -531,11 +541,6 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   console.log(`\n✓ Verification passed: every data document belongs to "${ACCOUNT_ID}".`);
-
-  if (flags.dryRun) {
-    console.log("Dry run complete. Re-run with --confirm to apply.\n");
-    return;
-  }
 
   // 6. Mark the account migrated and record the audit trail.
   await accountRef.set(
