@@ -1052,6 +1052,14 @@
         { "fieldPath": "accountId", "order": "ASCENDING" },
         { "fieldPath": "startedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "providerEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "accountId", "order": "ASCENDING" },
+        { "fieldPath": "receivedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

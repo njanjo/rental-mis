@@ -390,6 +390,20 @@ export interface StaffOption {
   active: boolean;
 }
 
+/** One row of the settings staff table. */
+export interface StaffListItem {
+  uid: string;
+  fullName: string;
+  email: string;
+  role: Role;
+  phoneE164?: string;
+  active: boolean;
+  propertyIds: string[];
+  propertyNames: string[];
+  lastSignInAt?: string;
+  createdAt: string;
+}
+
 export interface PropertyOption {
   id: string;
   name: string;
