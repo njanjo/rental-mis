@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { Separator } from "@/components/ui/separator";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { UserMenu } from "@/components/layout/user-menu";
+import { APP_NAME } from "@/lib/brand";
 import { ALL_NAV_ITEMS } from "@/lib/navigation";
 import type { Role } from "@/lib/types";
 
@@ -21,7 +22,7 @@ export function Topbar({
   const current =
     ALL_NAV_ITEMS.find(
       (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
-    )?.label ?? "Rental MIS";
+    )?.label ?? APP_NAME;
 
   return (
     <header className="sticky top-0 z-20 flex h-14 shrink-0 items-center gap-2 border-b bg-background/85 px-4 backdrop-blur supports-[backdrop-filter]:bg-background/70">

@@ -1,4 +1,4 @@
-# Rental MIS
+# Boma Cloud
 
 Property operations platform for landlords and property managers in Kenya.
 

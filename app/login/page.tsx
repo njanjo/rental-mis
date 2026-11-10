@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import { redirect } from "next/navigation";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Clock } from "lucide-react";
 
 import { LoginForm } from "@/components/auth/login-form";
 import { defaultLandingPath } from "@/lib/auth/landing";
+import { APP_NAME } from "@/lib/brand";
 import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
@@ -14,12 +15,13 @@ export const metadata: Metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; reason?: string }>;
 }) {
   const params = await searchParams;
   const rawNext = params.next ?? "";
   const nextPath =
     rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : null;
+  const showInactiveNotice = params.reason === "inactive";
 
   const user = await getSessionUser();
   if (user) {
@@ -39,14 +41,14 @@ export default async function LoginPage({
           <span className="flex size-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15">
                 <Image
                   src="/icon.svg"
-                  alt="Rental MIS"
+                  alt={APP_NAME}
                   width={40}
                   height={40}
                   className="size-10"
                 />
               </span>
           <div>
-            <p className="text-sm font-semibold tracking-wide">Rental MIS</p>
+            <p className="text-sm font-semibold tracking-wide">{APP_NAME}</p>
             <p className="text-xs text-slate-400">Property operations · Kenya</p>
           </div>
         </div>
@@ -90,15 +92,25 @@ export default async function LoginPage({
               <span className="flex size-9 items-center justify-center rounded-lg bg-primary text-primary-foreground">
                 <Image
                   src="/icon.svg"
-                  alt="Rental MIS"
+                  alt={APP_NAME}
                   width={36}
                   height={36}
                   className="size-9"
                 />
               </span>
-              <span className="text-sm font-semibold">Rental MIS</span>
+              <span className="text-sm font-semibold">{APP_NAME}</span>
             </div>
           </div>
+
+          {showInactiveNotice ? (
+            <div className="mb-6 flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3.5 py-3 text-sm text-amber-800 dark:text-amber-300">
+              <Clock className="mt-0.5 size-4 shrink-0 text-amber-600" />
+              <p>
+                You were signed out after 10 minutes of inactivity. Sign in
+                again to continue.
+              </p>
+            </div>
+          ) : null}
 
           <div className="mb-8 space-y-1.5">
             <h2 className="text-2xl font-semibold tracking-tight">Staff sign in</h2>

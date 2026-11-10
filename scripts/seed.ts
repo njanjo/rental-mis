@@ -629,22 +629,22 @@ async function seedSettings(): Promise<void> {
     {
       key: "payment_receipt",
       enabled: true,
-      body: "Rental MIS: received KES {{amount}} for {{unit}}. Ref {{reference}}. Thank you.",
+      body: "Boma Cloud: received KES {{amount}} for {{unit}}. Ref {{reference}}. Thank you.",
     },
     {
       key: "rent_due_reminder",
       enabled: true,
-      body: "Rental MIS: rent of KES {{amount}} for {{unit}} is due on {{dueDate}}.",
+      body: "Boma Cloud: rent of KES {{amount}} for {{unit}} is due on {{dueDate}}.",
     },
     {
       key: "arrears_notice",
       enabled: true,
-      body: "Rental MIS: balance of KES {{balance}} for {{unit}} is overdue. Please settle.",
+      body: "Boma Cloud: balance of KES {{balance}} for {{unit}} is overdue. Please settle.",
     },
     {
       key: "lease_expiry",
       enabled: true,
-      body: "Rental MIS: your lease for {{unit}} expires on {{endDate}}. Contact the office to renew.",
+      body: "Boma Cloud: your lease for {{unit}} expires on {{endDate}}. Contact the office to renew.",
     },
     {
       key: "bulk_announcement",

@@ -21,7 +21,8 @@ import { getFirebaseAuth } from "@/lib/firebase/client";
 interface AuthContextValue {
   user: User | null;
   initializing: boolean;
-  signOut: () => Promise<void>;
+  /** `reason: "inactive"` lands on /login with an inactivity notice. */
+  signOut: (reason?: "inactive") => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -42,14 +43,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, []);
 
-  const signOut = useCallback(async () => {
+  const signOut = useCallback(async (reason?: "inactive") => {
     try {
       await firebaseSignOut(getFirebaseAuth());
     } finally {
       await fetch("/api/auth/session", { method: "DELETE" }).catch(
         () => undefined,
       );
-      router.replace("/login");
+      router.replace(
+        reason === "inactive" ? "/login?reason=inactive" : "/login",
+      );
       router.refresh();
     }
   }, [router]);

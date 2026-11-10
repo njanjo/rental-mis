@@ -20,6 +20,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { canAny } from "@/lib/auth/permissions";
+import { APP_NAME } from "@/lib/brand";
 import { NAV_SECTIONS } from "@/lib/navigation";
 import { ROLE_LABELS, type Role } from "@/lib/types";
 
@@ -38,19 +39,19 @@ export function AppSidebar({ role, fullName }: AppSidebarProps) {
       <SidebarHeader className="border-b border-sidebar-border/60 pb-3">
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild tooltip="Rental MIS">
+            <SidebarMenuButton size="lg" asChild tooltip={APP_NAME}>
               <Link href="/dashboard">
                 <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
                   <Image
                     src="/icon.svg"
-                    alt="Rental MIS"
+                    alt={APP_NAME}
                     width={32}
                     height={32}
                     className="size-8"
                   />
                 </span>
                 <span className="flex flex-col gap-0.5 leading-none">
-                  <span className="truncate text-sm font-semibold">Rental MIS</span>
+                  <span className="truncate text-sm font-semibold">{APP_NAME}</span>
                   <span className="truncate text-[11px] text-sidebar-foreground/60">
                     Kenya property ops
                   </span>

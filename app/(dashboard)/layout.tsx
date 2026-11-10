@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 
 import { SessionError } from "@/components/auth/session-error";
+import { IdleLogout } from "@/components/auth/idle-logout";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
@@ -32,6 +33,7 @@ export default async function DashboardLayout({
 
   return (
     <SidebarProvider>
+      <IdleLogout />
       <AppSidebar role={user.role} fullName={user.fullName} />
       <SidebarInset className="min-w-0">
         <Topbar fullName={user.fullName} email={user.email} role={user.role} />
