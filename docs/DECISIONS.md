@@ -276,6 +276,15 @@ no UI changes, no role changes — the existing customer simply becomes
   `profile().accountId` to match the document's `accountId` and are denied when
   the profile has none. The Admin SDK still enforces capability + property +
   account checks itself; rules remain the boundary for direct client access.
+- **Single-operator accounts resolve automatically.** An operator who manages
+  properties for several people never types or chooses an account id. When a
+  profile has no `accountId`, `ensureProfileAccount()` (used by both session
+  resolution and session minting) falls back to `BOMA_DEFAULT_ACCOUNT_ID`, or
+  the only active account, repairs the profile and writes a
+  `staff.account_repaired` audit entry. `scripts/provision-staff.ts` therefore
+  treats `--account` as optional: it uses the only active account, or creates
+  `acc_main` when the project has none. A valid session that still cannot be
+  used shows an explicit error screen instead of bouncing back to `/login`.
 
 ## Phase 8 — OTP two-factor login (REVERTED)
 

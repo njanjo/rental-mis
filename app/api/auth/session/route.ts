@@ -10,8 +10,10 @@
  */
 import { NextResponse } from "next/server";
 
+import { ensureProfileAccount } from "@/lib/auth/account";
 import { SESSION_COOKIE, SESSION_MAX_AGE_SECONDS } from "@/lib/auth/constants";
 import { adminAuth, adminDb } from "@/lib/firebase/admin";
+import type { UserProfile } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,10 +49,27 @@ export async function POST(request: Request) {
       );
     }
 
-    const profile = snapshot.data();
+    const profile = snapshot.data() as UserProfile;
     if (!profile?.active) {
       return NextResponse.json(
         { error: "This account has been deactivated." },
+        { status: 403 },
+      );
+    }
+
+    // Never mint a cookie the dashboard would immediately reject: resolve the
+    // default account for a legacy profile (and repair it) before issuing one.
+    const { accountId } = await ensureProfileAccount(
+      decoded.uid,
+      profile.accountId,
+      { email: profile.email ?? decoded.email, role: profile.role },
+    );
+    if (!accountId) {
+      return NextResponse.json(
+        {
+          error:
+            "No account is provisioned for this deployment. Ask an administrator to create one.",
+        },
         { status: 403 },
       );
     }

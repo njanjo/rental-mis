@@ -94,20 +94,21 @@ export async function createAccount(
   const existing = await docRef.get();
   // The admin Timestamp satisfies Firestore at runtime; the type-only
   // mismatch comes from lib/types being authored against the client SDK.
-  const account = {
+  const account: Record<string, unknown> = {
     id: docRef.id,
     name,
     nameLower: name.toLowerCase(),
     customerType: input.customerType,
     status: existing.exists ? (existing.data()?.status ?? "active") : "active",
-    contactPhoneE164: input.contactPhoneE164,
-    contactEmail: input.contactEmail,
     createdAt: existing.exists ? existing.data()?.createdAt : now,
     updatedAt: now,
-  } as unknown as Account;
+  };
+  // Firestore rejects undefined values.
+  if (input.contactPhoneE164) account.contactPhoneE164 = input.contactPhoneE164;
+  if (input.contactEmail) account.contactEmail = input.contactEmail;
 
   await docRef.set(account, { merge: true });
-  return account;
+  return account as unknown as Account;
 }
 
 /**

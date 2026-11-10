@@ -88,8 +88,9 @@ function fail(message: string): never {
 const __usage =
   "\nUsage:\n" +
   "  npx tsx scripts/provision-staff.ts --project <project-id> --confirm \\\n" +
-  "    --account <accountId> --email <email> --name \"Full Name\" [--role admin] [--property id1,id2] [--password <pw>] [--phone +254712345678 (optional)] [--env-file <file>]\n" +
-  "\n  --account must name an existing accounts/{id} document (see scripts/seed.ts).\n";
+  "    [--account <accountId>] --email <email> --name \"Full Name\" [--role admin] [--property id1,id2] [--password <pw>] [--phone +254712345678 (optional)] [--env-file <file>]\n" +
+  "\n  --account is optional for a single-operator deployment: when omitted the\n" +
+  "  only active account is used, or acc_main is created if none exists yet.\n";
 
 // ---------------------------------------------------------------------------
 // Environment
@@ -134,9 +135,6 @@ if (!flags.confirm) {
 }
 if (!flags.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(flags.email)) {
   fail("A valid --email is required.");
-}
-if (!flags.account) {
-  fail("--account <accountId> is required. Staff always belong to one customer account.");
 }
 if (!flags.name) {
     fail("--name \"Full Name\" is required (it becomes the users doc fullName).");
@@ -236,7 +234,7 @@ let existed = false;
 
 const preview = {
   project: projectId,
-  account: flags.account,
+  account: flags.account ?? "(auto: only active account or acc_main)",
   email: flags.email,
   name: flags.name,
   role: flags.role,
@@ -253,16 +251,48 @@ if (!flags.password) {
 }
 
 async function main(): Promise<void> {
-  // 0. The account must exist; staff never float between customers.
-  const accountSnapshot = await db
-    .collection("accounts")
-    .doc(flags.account!)
-    .get();
+  // 0. Resolve the account. Single-operator deployments never pass one: use the
+  //    only active account, or create acc_main when the project has none yet.
+  let accountId = flags.account;
+  if (!accountId) {
+    const active = await db
+      .collection("accounts")
+      .where("status", "==", "active")
+      .limit(2)
+      .get();
+    if (active.size === 1) {
+      accountId = active.docs[0].id;
+      console.log(`No --account given; using the only active account (${accountId}).`);
+    } else if (active.size === 0) {
+      accountId = "acc_main";
+      console.log(`No --account given and no active account exists; creating ${accountId}.`);
+    } else {
+      fail(
+        `Multiple accounts exist (${active.docs.map((doc) => doc.id).join(", ")}); ` +
+          "pass --account <id>.",
+      );
+    }
+  }
+
+  // The account must exist; staff never float between customers.
+  const accountSnapshot = await db.collection("accounts").doc(accountId).get();
   if (!accountSnapshot.exists) {
-    fail(
-      `accounts/${flags.account} does not exist in "${projectId}". ` +
-        "Create it first (or run scripts/migrate-to-accounts.ts / scripts/seed.ts).",
-    );
+    if (flags.account) {
+      fail(
+        `accounts/${accountId} does not exist in "${projectId}". ` +
+          "Create it first (or run scripts/migrate-to-accounts.ts / scripts/seed.ts).",
+      );
+    }
+    await db.collection("accounts").doc(accountId).set({
+      id: accountId,
+      name: "Default Account",
+      nameLower: "default account",
+      customerType: "landlord",
+      status: "active",
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    console.log(`Created account ${accountId} ("Default Account").`);
   }
 
   // 1. Auth user — create or update, mirroring the seed's upsert.
@@ -296,7 +326,7 @@ async function main(): Promise<void> {
   await db.collection("users").doc(uid).set(
     {
       uid,
-      accountId: flags.account,
+      accountId,
       fullName: flags.name,
       email: flags.email,
       role: flags.role,
@@ -312,7 +342,7 @@ async function main(): Promise<void> {
 
   // 4. Audit trail — no change without one (docs/DECISIONS.md).
   await db.collection("auditLogs").add({
-    accountId: flags.account,
+    accountId,
     actorUid: "bootstrap:provision-staff",
     actorRole: "admin",
     action: "staff.provisioned",

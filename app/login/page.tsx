@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { CheckCircle2 } from "lucide-react";
 
 import { LoginForm } from "@/components/auth/login-form";
+import { defaultLandingPath } from "@/lib/auth/landing";
 import { getSessionUser } from "@/lib/auth/session";
 
 export const metadata: Metadata = {
@@ -15,17 +16,17 @@ export default async function LoginPage({
 }: {
   searchParams: Promise<{ next?: string }>;
 }) {
-  const user = await getSessionUser();
-  if (user) {
-    redirect("/dashboard");
-  }
-
-  const showDemoHint = process.env.NEXT_PUBLIC_USE_EMULATORS === "true";
-
   const params = await searchParams;
   const rawNext = params.next ?? "";
   const nextPath =
-    rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : "/dashboard";
+    rawNext.startsWith("/") && !rawNext.startsWith("//") ? rawNext : null;
+
+  const user = await getSessionUser();
+  if (user) {
+    redirect(nextPath ?? defaultLandingPath(user.role));
+  }
+
+  const showDemoHint = process.env.NEXT_PUBLIC_USE_EMULATORS === "true";
 
   return (
     <div className="grid min-h-svh lg:grid-cols-[1.05fr_1fr]">
@@ -106,7 +107,7 @@ export default async function LoginPage({
             </p>
           </div>
 
-          <LoginForm nextPath={nextPath} showDemoHint={showDemoHint} />
+          <LoginForm nextPath={nextPath ?? "/dashboard"} showDemoHint={showDemoHint} />
 
           <p className="mt-8 text-xs text-muted-foreground">
             Forgot your password? Contact your administrator to reset it.

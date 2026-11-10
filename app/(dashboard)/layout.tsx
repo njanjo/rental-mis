@@ -1,19 +1,33 @@
 import { redirect } from "next/navigation";
 
+import { SessionError } from "@/components/auth/session-error";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import { getSessionUser } from "@/lib/auth/session";
+import { resolveSession } from "@/lib/auth/session";
+
+const FAILURE_MESSAGES = {
+  "profile-missing":
+    "Your sign-in works, but no staff profile exists for this account.",
+  inactive: "This staff profile has been deactivated.",
+  "unassigned-account":
+    "This staff profile is not linked to an account and no default account exists.",
+} as const;
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const user = await getSessionUser();
+  const { user, failure } = await resolveSession();
 
   if (!user) {
-    redirect("/login");
+    // No cookie or a rejected cookie is a normal sign-out: send to login.
+    if (!failure || failure === "missing" || failure === "invalid") {
+      redirect("/login");
+    }
+    // A valid session that cannot be used gets an explanation, not a loop.
+    return <SessionError message={FAILURE_MESSAGES[failure]} />;
   }
 
   return (

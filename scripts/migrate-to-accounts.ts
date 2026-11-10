@@ -447,21 +447,25 @@ async function main(): Promise<void> {
   const accountRef = db.collection("accounts").doc(ACCOUNT_ID);
   const existingAccount = await accountRef.get();
   if (!flags.dryRun) {
-    await accountRef.set(
-      {
-        id: ACCOUNT_ID,
-        name: ACCOUNT_NAME,
-        nameLower: ACCOUNT_NAME.toLowerCase(),
-        customerType: flags.customerType,
-        status: existingAccount.data()?.status ?? "active",
-        contactPhoneE164: existingAccount.data()?.contactPhoneE164,
-        contactEmail: existingAccount.data()?.contactEmail,
-        legacyMigrated: false,
-        createdAt: existingAccount.data()?.createdAt ?? FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    const existing = existingAccount.data();
+    // Firestore rejects undefined values, so only write optional fields when set.
+    const accountDoc: Record<string, unknown> = {
+      id: ACCOUNT_ID,
+      name: ACCOUNT_NAME,
+      nameLower: ACCOUNT_NAME.toLowerCase(),
+      customerType: flags.customerType,
+      status: existing?.status ?? "active",
+      legacyMigrated: false,
+      createdAt: existing?.createdAt ?? FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+    };
+    if (existing?.contactPhoneE164) {
+      accountDoc.contactPhoneE164 = existing.contactPhoneE164;
+    }
+    if (existing?.contactEmail) {
+      accountDoc.contactEmail = existing.contactEmail;
+    }
+    await accountRef.set(accountDoc, { merge: true });
   }
 
   // 2. Backfill accountId on every data collection (idempotent).
