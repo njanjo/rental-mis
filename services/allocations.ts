@@ -5,6 +5,7 @@ import {
   type Transaction,
 } from "firebase-admin/firestore";
 
+import { SETTINGS_COLLECTION } from "@/lib/accounts";
 import { planAllocation } from "@/lib/allocation";
 import { writeAuditLog } from "@/lib/audit";
 import { assertCapability, requireAccount, scopePropertyIds } from "@/lib/auth/scope";
@@ -90,9 +91,12 @@ function tenantPropertyIds(tenant: Tenant): string[] {
  * has to create compensating entries in a later phase rather than rewriting
  * history.
  *
- * Oldest due invoice wins. Any surplus becomes tenant credit, never a guess:
- * a payment that cannot be matched is expected to stay in the unmatched queue
- * instead of reaching this function.
+ * Fill order follows `systemSettings/{accountId}.billing.allocationStrategy`
+ * (default oldest due invoice first; docs/DECISIONS.md #11). Any surplus
+ * becomes tenant credit, never a guess — the stored `overpayment: "review"`
+ * value is not enforced yet (Decision 12). A payment that cannot be matched
+ * is expected to stay in the unmatched queue instead of reaching this
+ * function.
  */
 export async function allocateWithinTransaction(
   tx: Transaction,
@@ -119,6 +123,16 @@ export async function allocateWithinTransaction(
       "This payment has already been allocated. Reverse it instead of allocating twice.",
     );
   }
+
+  // Billing rules live on the account's settings doc (Decision F). The read
+  // belongs here, with the other reads, because Firestore transactions
+  // require every read before the first write.
+  const settingsSnapshot = await tx.get(
+    db.collection(SETTINGS_COLLECTION).doc(accountId),
+  );
+  const allocationStrategy =
+    ((settingsSnapshot.data() as { billing?: { allocationStrategy?: string } })
+      ?.billing?.allocationStrategy as "oldest_first" | "newest_first" | undefined) ?? "oldest_first";
 
   const tenantRef = db.collection(TENANT_COLLECTION).doc(target.tenantId);
   const tenantSnapshot = await tx.get(tenantRef);
@@ -164,6 +178,7 @@ export async function allocateWithinTransaction(
       balanceMinor: invoice.balanceMinor,
     })),
     target.amountMinor,
+    { order: allocationStrategy },
   );
 
   const byId = new Map(candidates.map((entry) => [entry.id, entry.invoice]));

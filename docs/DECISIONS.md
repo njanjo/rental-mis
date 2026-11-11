@@ -286,6 +286,48 @@ no UI changes, no role changes — the existing customer simply becomes
   `acc_main` when the project has none. A valid session that still cannot be
   used shows an explicit error screen instead of bouncing back to `/login`.
 
+## Settings & staff administration (Phase 3+ · /settings)
+
+- **Admin-only module.** The whole page sits under `manage_settings` (admin).
+  Reminder windows and SMS templates stay admin-editable even though finance
+  owns `manage_sms`: rules deny finance reads on `systemSettings`, and the
+  one-capability-per-doc boundary was not worth relaxing for one form.
+- **Staff invites reuse the runbook chain.** The UI mirrors
+  `scripts/provision-staff.ts`: Auth user → `{ role }` custom claim →
+  `users/{uid}` doc → audit entry, all through server actions on the Admin SDK.
+  An invite generates a strong 18-char password that is shown to the inviting
+  admin **once** (returned via `FormState.secret`, never stored client-side);
+  staff must change it on `/account`. An email that already has a `users` doc
+  — in any account — is refused; an Auth user without a profile may be adopted.
+- **Guardrails.** Nobody edits their own role/scope or deactivates themselves;
+  the last active administrator of an account cannot be deactivated; admins
+  never carry `propertyIds`; scope is validated against the account's *active*
+  properties only. Deactivation writes `users.active` (the session + rules
+  boundary) and disables the Auth user best-effort *after* the commit.
+- **Manager sync is bidirectional now.** Property edits already kept
+  `users.propertyIds` in step with `properties.managerIds`; role/scope edits
+  from the staff side reconcile `managerIds` in the same transaction, so
+  access can never drift in either direction.
+- **Billing rules are stored and partly enforced.** `allocationStrategy`
+  (`oldest_first` | `newest_first`) is read inside the allocation
+  transaction and changes the fill order from the next allocation.
+  `manual` is not offered and `overpayment: "review"` is stored but not
+  enforced — auto-credit stands (Decision 12) until a review queue exists.
+  Late-fee fields are policy storage only; nothing charges them yet
+  (Decision 13). `invoiceGenerationDay` is informational for the cron schedule.
+- **Template overrides apply to reminders.** Reminder jobs load
+  `systemSettings/{accountId}.templates` and use the stored bodies (disabled
+  templates are skipped). Payment receipts keep the built-in defaults for
+  now: their enqueue runs inside the payment transaction, where an extra
+  settings read would have to sit before every write — deliberately deferred
+  rather than risked against money.
+- **Integration health is presence + signals, never secrets.** The panel
+  checks env-var presence (M-Pesa Daraja, Beam SMS, Firebase admin creds,
+  `BOMA_DEFAULT_ACCOUNT_ID`) and bounded live signals (failed
+  `providerEvents` among the last 30, dead-letter/failed SMS counts, open
+  unmatched payments, latest `bankSyncRuns`). A composite index on
+  `providerEvents (accountId, receivedAt DESC)` was added for the event scan.
+
 ## Phase 8 — OTP two-factor login (REVERTED)
 
 The OTP second factor was removed: staff sign in with **email + password
@@ -313,3 +355,7 @@ remain only for tenant-facing SMS (receipts, reminders).
    URLs (validation, confirmation, STK) built from `MPESA_CALLBACK_BASE_URL` +
    `MPESA_CALLBACK_SECRET`, and whether paybill validation is wired to reject
    anything today (it currently accepts every readable callback).
+8. Settings enforcement gaps by design (see "Settings & staff administration"):
+   `overpayment: "review"` needs a review queue, late fees need the finance
+   policy + charging engine, and payment-receipt SMS needs a template override
+   path that does not add reads inside money transactions.

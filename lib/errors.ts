@@ -44,6 +44,11 @@ export interface FormState {
   fieldErrors?: Record<string, string[]>;
   /** Set on success when the action creates or renames something. */
   entityId?: string;
+  /**
+   * One-time secret surfaced to the calling admin (e.g. the generated staff
+   * password). Rendered exactly once and never persisted client-side.
+   */
+  secret?: string;
 }
 
 export const IDLE_FORM_STATE: FormState = { status: "idle" };

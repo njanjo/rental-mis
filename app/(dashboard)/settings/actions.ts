@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 import { assertCapability } from "@/lib/auth/scope";
 import { getSessionUser, type SessionUser } from "@/lib/auth/session";
@@ -14,7 +15,7 @@ import {
 import {
   billingRulesSchema,
   reminderRulesSchema,
-  smsTemplateSchema,
+  smsTemplatesSchema,
   staffInviteSchema,
   staffRoleScopeSchema,
 } from "@/lib/validation/settings";
@@ -37,6 +38,14 @@ async function actor(): Promise<SessionUser> {
   return user;
 }
 
+const reasonSchema = z.object({
+  reason: z
+    .string()
+    .trim()
+    .min(5, { message: "Give a short reason (at least 5 characters)." })
+    .max(500),
+});
+
 function readBillingValues(formData: FormData) {
   return {
     allocationStrategy: stringValue(formData, "allocationStrategy"),
@@ -46,6 +55,23 @@ function readBillingValues(formData: FormData) {
     gracePeriodDays: stringValue(formData, "gracePeriodDays"),
     invoiceGenerationDay: stringValue(formData, "invoiceGenerationDay"),
   };
+}
+
+/**
+ * The SmsTemplate[] arrives as parallel form fields: `key`, `body` and
+ * `enabled` repeat once per editable template. Repeated FormData names become
+ * arrays, so the parsed values match `smsTemplatesSchema`.
+ */
+function readTemplatesValue(formData: FormData) {
+  const keys = stringArrayValue(formData, "key");
+  const bodies = formData.getAll("body").map(String);
+  const enabled = formData.getAll("enabled").map(String);
+
+  return keys.map((key, index) => ({
+    key,
+    body: bodies[index] ?? "",
+    enabled: enabled[index] === "on" || enabled[index] === "true",
+  }));
 }
 
 export async function updateBillingRulesAction(
@@ -97,10 +123,7 @@ export async function updateSmsTemplatesAction(
     const user = await actor();
     assertCapability(user, "manage_settings");
 
-    const parsed = parseFormValues(
-      smsTemplatesSchema,
-      readTemplatesValue(formData),
-    );
+    const parsed = parseFormValues(smsTemplatesSchema, readTemplatesValue(formData));
     if (!parsed.ok) return parsed.state;
 
     await updateSmsTemplates(user, parsed.data);
@@ -132,9 +155,11 @@ export async function inviteStaffAction(
     revalidatePath("/settings");
     return {
       status: "success",
-      message: `${parsed.data.fullName} was invited. Share the password once,`
-        + ` then they change it on /account.`,
+      message:
+        `${parsed.data.fullName} was invited. Share the generated password ` +
+        `once — they must change it on /account.`,
       entityId: result.uid,
+      secret: result.password,
     };
   } catch (error) {
     return toFormState(error);
@@ -174,44 +199,17 @@ export async function setStaffActiveAction(
     const user = await actor();
     const uid = stringValue(formData, "uid");
     const active = checkboxValue(formData, "active");
-    const parsed = parseFormValues(
-      reasonSchema,
-      { reason: stringValue(formData, "reason") },
-    );
+    const parsed = parseFormValues(reasonSchema, {
+      reason: stringValue(formData, "reason"),
+    });
     if (!parsed.ok) return parsed.state;
 
     await setStaffActive(user, uid, active, parsed.data.reason);
     revalidatePath("/settings");
-    return formSuccess(active ? "Staff member reactivated." : "Staff member deactivated.");
+    return formSuccess(
+      active ? "Staff member reactivated." : "Staff member deactivated.",
+    );
   } catch (error) {
     return toFormState(error);
   }
 }
-
-/**
- * The SmsTemplate[] arrives as parallel form fields:
- * `key`, `body` and `enabled` repeat once per editable template. Repeated
- * FormData names become arrays via `stringArrayValue`, so schema shape matches
- * the parsed values.
- */
-function readTemplatesValue(formData: FormData) {
-  const keys = stringArrayValue(formData, "key");
-  const bodies = formData.getAll("body").map(String);
-  const enabled = formData.getAll("enabled").map(String);
-
-  return keys.map((key, index) => ({
-    key,
-    body: bodies[index] ?? "",
-    enabled: enabled[index] === "on" || enabled[index] === "true",
-  }));
-}
-
-import { z } from "zod";
-
-const reasonSchema = z.object({
-  reason: z
-    .string()
-    .trim()
-    .min(5, { message: "Give a short reason (at least 5 characters)." })
-    .max(500),
-});

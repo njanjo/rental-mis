@@ -9,8 +9,8 @@ import type { SessionUser } from "@/lib/auth/session";
 import { toIsoString } from "@/lib/dates";
 import { ServiceError } from "@/lib/errors";
 import { normaliseKenyanPhone } from "@/lib/phone";
-import type { Role, UserProfile } from "@/lib/types";
-import type { Property, StaffListItem } from "@/lib/types/views";
+import type { Property, UserProfile } from "@/lib/types";
+import type { StaffListItem } from "@/lib/types/views";
 import type {
   StaffInviteInput,
   StaffRoleScopeInput,
@@ -226,12 +226,13 @@ export async function inviteStaff(
 
   let phoneE164: string | undefined;
   if (input.phoneE164) {
-    phoneE164 = normaliseKenyanPhone(input.phoneE164);
-    if (!phoneE164) {
+    const normalised = normaliseKenyanPhone(input.phoneE164);
+    if (!normalised) {
       throw new ServiceError("validation", "Enter a valid Kenyan mobile number.", {
         fieldErrors: { phoneE164: ["Use a Kenyan number, e.g. 0712 345 678."] },
       });
     }
+    phoneE164 = normalised;
   }
 
   const auth = adminAuth();
@@ -468,7 +469,7 @@ export async function setStaffActive(
 
   const db = adminDb();
   const targetRef = db.collection(USERS).doc(uid);
-  const { profile } = await accountProfile(actor, uid);
+  const profile = await accountProfile(actor, uid);
 
   if (profile.active === active) {
     throw new ServiceError(

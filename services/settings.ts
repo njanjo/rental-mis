@@ -6,7 +6,6 @@ import { getSystemSettings, SETTINGS_COLLECTION } from "@/lib/accounts";
 import { writeAuditLog } from "@/lib/audit";
 import { assertCapability, requireAccount } from "@/lib/auth/scope";
 import type { SessionUser } from "@/lib/auth/session";
-import { ServiceError } from "@/lib/errors";
 import { adminDb } from "@/lib/firebase/admin";
 import {
   DEFAULT_SMS_TEMPLATES,

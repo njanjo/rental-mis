@@ -41,6 +41,7 @@ import type {
   Role,
   SmsOutboxItem,
   SmsStatus,
+  SmsTemplate,
   SmsTemplateKey,
   Tenant,
 } from "@/lib/types";
@@ -101,6 +102,12 @@ export interface EnqueueSmsInput {
   dueDate?: string;
   balanceMinor?: number;
   campaignId?: string;
+  /**
+   * Account overrides from `systemSettings/{accountId}.templates` (Decision F).
+   * Absent means the shipping defaults apply — notably on the payment receipt
+   * path, which deliberately takes no extra settings read.
+   */
+  templates?: SmsTemplate[];
   requestedBy: string;
 }
 
@@ -113,11 +120,23 @@ export function buildOutboxDoc(
       "A message cannot be queued without an account to route it to.",
     );
   }
+  // Account overrides come from `systemSettings/{accountId}.templates`. A
+  // missing entry — or an empty body — falls back to the shipping default; a
+  // disabled override must never queue.
+  const override = input.templates?.find(
+    (template) => template.key === input.templateKey,
+  );
+  if (override?.enabled === false) {
+    throw new ServiceError(
+      "validation",
+      "That SMS template is not available yet.",
+    );
+  }
   // lease_expiry / bulk_announcement templates are not defined yet.
   const templates = DEFAULT_SMS_TEMPLATES as Partial<
     Record<SmsTemplateKey, string>
   >;
-  const template = templates[input.templateKey];
+  const template = override?.body || templates[input.templateKey];
   if (!template) {
     throw new ServiceError(
       "validation",
@@ -147,6 +166,9 @@ export function buildOutboxDoc(
  * committed atomically with its payment. Deliberately swallows template
  * errors: notifications must never break a money commit. Attempt failures
  * also cannot happen here — the actual Beam call happens later in the worker.
+ *
+ * Receipt callers pass no `templates`, so the shipping defaults apply: the
+ * payment transaction must not take an extra settings read.
  */
 export function enqueueSmsWithinTransaction(
   tx: Transaction,
@@ -159,7 +181,12 @@ export function enqueueSmsWithinTransaction(
   }
 }
 
-/** Skip when this exact notification was already queued (campaign dedupe). */
+/**
+ * Skip when this exact notification was already queued (campaign dedupe).
+ * A disabled template throws inside `buildOutboxDoc` and lands in the catch
+ * below, so it also reports "not queued" — the reminder run counts it as
+ * skipped instead of failing.
+ */
 export async function enqueueReminderIfNew(
   input: EnqueueSmsInput,
 ): Promise<boolean> {
@@ -598,17 +625,20 @@ export interface ReminderOutcome {
   skipped: number;
 }
 
-async function loadReminderCadence(
+async function loadReminderConfig(
   accountId: string,
 ): Promise<{
   dueSoonDaysBefore: number;
   overdueRepeatDays: number;
+  templates: SmsTemplate[];
 }> {
-  // Decision F: settings live on the account's own settings doc.
+  // Decision F: settings live on the account's own settings doc. Template
+  // overrides ride along so reminder bodies follow the account's wording.
   const settings = await getSystemSettings(accountId);
   return {
     dueSoonDaysBefore: settings.reminders?.dueSoonDaysBefore ?? 3,
     overdueRepeatDays: settings.reminders?.overdueRepeatDays ?? 7,
+    templates: settings.templates ?? [],
   };
 }
 
@@ -652,7 +682,8 @@ function wholeDaysBetween(from: Date, to: Date): number {
  * Generate rent reminders for active, consented tenants with live invoices:
  * one "rent due soon" message per invoice inside `dueSoonDaysBefore`, then an
  * arrears notice every `overdueRepeatDays` while it stays unpaid. Campaign ids
- * keep every run idempotent.
+ * keep every run idempotent. Message bodies use the account's stored template
+ * overrides when configured.
  */
 export async function generateReminders(
   accountId: string,
@@ -660,9 +691,9 @@ export async function generateReminders(
   actorOverride?: SessionUser,
 ): Promise<ReminderOutcome> {
   const actor = actorOverride ?? smsSystemActor(accountId);
-  const cadence = await loadReminderCadence(accountId);
+  const config = await loadReminderConfig(accountId);
   const outcome: ReminderOutcome = { dueSoon: 0, overdue: 0, skipped: 0 };
-  if (cadence.dueSoonDaysBefore <= 0 && cadence.overdueRepeatDays <= 0) {
+  if (config.dueSoonDaysBefore <= 0 && config.overdueRepeatDays <= 0) {
     return outcome;
   }
 
@@ -702,13 +733,13 @@ export async function generateReminders(
     let templateKey: "rent_due_reminder" | "arrears_notice" | undefined;
     let campaignSuffix: string | undefined;
 
-    if (daysToDue >= 0 && daysToDue <= cadence.dueSoonDaysBefore) {
+    if (daysToDue >= 0 && daysToDue <= config.dueSoonDaysBefore) {
       templateKey = "rent_due_reminder";
       campaignSuffix = "due_soon";
     } else if (
       daysToDue < 0 &&
-      cadence.overdueRepeatDays > 0 &&
-      Math.abs(daysToDue) % cadence.overdueRepeatDays === 0
+      config.overdueRepeatDays > 0 &&
+      Math.abs(daysToDue) % config.overdueRepeatDays === 0
     ) {
       templateKey = "arrears_notice";
       campaignSuffix = `overdue_${Math.abs(daysToDue)}`;
@@ -739,6 +770,7 @@ export async function generateReminders(
     const queued = await enqueueReminderIfNew({
       ...facts,
       campaignId: `${templateKey}:${doc.id}:${campaignSuffix}`,
+      templates: config.templates,
     });
 
     if (queued) {

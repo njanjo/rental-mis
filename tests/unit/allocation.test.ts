@@ -96,3 +96,69 @@ describe("planAllocation", () => {
     expect(plan.remainderMinor).toBe(0);
   });
 });
+
+describe("planAllocation order option", () => {
+  it("fills the newest due invoice first when asked", () => {
+    const plan = planAllocation(
+      [
+        invoice("inv_new", "2026-03-05", 4_500_000),
+        invoice("inv_old", "2026-01-05", 4_500_000),
+        invoice("inv_mid", "2026-02-05", 4_500_000),
+      ],
+      10_000_000,
+      { order: "newest_first" },
+    );
+
+    expect(plan.allocations).toEqual([
+      { invoiceId: "inv_new", amountMinor: 4_500_000 },
+      { invoiceId: "inv_mid", amountMinor: 4_500_000 },
+      { invoiceId: "inv_old", amountMinor: 1_000_000 },
+    ]);
+    expect(plan.allocatedMinor).toBe(10_000_000);
+    expect(plan.remainderMinor).toBe(0);
+  });
+
+  it("breaks due-date ties on invoice id in both orders", () => {
+    const invoices = [
+      invoice("inv_b", "2026-01-05", 1_000_000),
+      invoice("inv_a", "2026-01-05", 1_000_000),
+      invoice("inv_c", "2026-02-05", 1_000_000),
+    ];
+
+    const oldest = planAllocation(invoices, 2_500_000);
+    expect(oldest.allocations).toEqual([
+      { invoiceId: "inv_a", amountMinor: 1_000_000 },
+      { invoiceId: "inv_b", amountMinor: 1_000_000 },
+      { invoiceId: "inv_c", amountMinor: 500_000 },
+    ]);
+    expect(oldest.remainderMinor).toBe(0);
+
+    const newest = planAllocation(invoices, 2_500_000, {
+      order: "newest_first",
+    });
+    expect(newest.allocations).toEqual([
+      { invoiceId: "inv_c", amountMinor: 1_000_000 },
+      { invoiceId: "inv_a", amountMinor: 1_000_000 },
+      { invoiceId: "inv_b", amountMinor: 500_000 },
+    ]);
+    expect(newest.remainderMinor).toBe(0);
+  });
+
+  it("omitting options behaves exactly like oldest_first", () => {
+    const invoices = [
+      invoice("inv_new", "2026-03-05", 4_500_000),
+      invoice("inv_old", "2026-01-05", 4_500_000),
+    ];
+
+    const withDefault = planAllocation(invoices, 5_000_000);
+    const explicit = planAllocation(invoices, 5_000_000, {
+      order: "oldest_first",
+    });
+
+    expect(withDefault).toEqual(explicit);
+    expect(withDefault.allocations.map((line) => line.invoiceId)).toEqual([
+      "inv_old",
+      "inv_new",
+    ]);
+  });
+});
