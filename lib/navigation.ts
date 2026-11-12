@@ -63,7 +63,7 @@ export const NAV_SECTIONS: NavSection[] = [
     items: [
       { href: "/invoices", label: "Invoices", icon: FileText, required: ["view_financials"] },
       { href: "/payments", label: "Payments", icon: Banknote, required: ["view_financials"] },
-      { href: "/reports", label: "Reports", icon: TrendingUp, required: ["export_reports"] },
+      { href: "/analytics", label: "Analytics", icon: TrendingUp, required: ["export_reports"] },
     ],
   },
   {

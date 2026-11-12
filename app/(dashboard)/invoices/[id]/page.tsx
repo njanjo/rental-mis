@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { VoidInvoiceDialog } from "@/components/invoices/invoice-dialogs";
+import { AlertBanner } from "@/components/shared/alert-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -76,19 +77,15 @@ export default async function InvoiceDetailPage({
       />
 
       {invoice.storedStatus === "void" ? (
-        <Card className="mb-4 border-slate-500/40 bg-slate-500/5">
-          <CardContent className="py-3 text-sm">
-            Voided {formatDateTime(invoice.voidedAt)}
-            {invoice.voidReason ? `: ${invoice.voidReason}` : "."}
-          </CardContent>
-        </Card>
+        <AlertBanner tone="info" className="mb-4">
+          Voided {formatDateTime(invoice.voidedAt)}
+          {invoice.voidReason ? `: ${invoice.voidReason}` : "."}
+        </AlertBanner>
       ) : invoice.isOverdue ? (
-        <Card className="mb-4 border-rose-500/40 bg-rose-500/5">
-          <CardContent className="py-3 text-sm">
-            This invoice passed its due date on {formatDate(invoice.dueDate)}.{" "}
-            {formatMoney(invoice.balanceMinor)} is still outstanding.
-          </CardContent>
-        </Card>
+        <AlertBanner tone="danger" className="mb-4">
+          This invoice passed its due date on {formatDate(invoice.dueDate)}.{" "}
+          {formatMoney(invoice.balanceMinor)} is still outstanding.
+        </AlertBanner>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -153,12 +150,10 @@ export default async function InvoiceDetailPage({
       </div>
 
       {prorated ? (
-        <Card className="mt-4 border-sky-500/30 bg-sky-500/5">
-          <CardContent className="py-3 text-sm">
-            Prorated rent: {invoice.billableDays} of {invoice.periodDays} days in{" "}
-            {invoice.periodLabel}. The lease did not cover the whole month.
-          </CardContent>
-        </Card>
+        <AlertBanner tone="info" className="mt-4">
+          Prorated rent: {invoice.billableDays} of {invoice.periodDays} days in{" "}
+          {invoice.periodLabel}. The lease did not cover the whole month.
+        </AlertBanner>
       ) : null}
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">

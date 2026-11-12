@@ -339,6 +339,47 @@ companion cookie and Edge middleware), `SESSION_FINGERPRINT_SECRET` and the
 OTP SMS template. A staff profile no longer needs a phone to log in; phones
 remain only for tenant-facing SMS (receipts, reminders).
 
+## Phase 9 — Design foundation and analytics contract
+
+- **Emerald "Boma" token set.** `app/globals.css` now carries a brand emerald
+  primary plus semantic `success`, `warning`, `danger`, `info` and
+  `state-neutral` tokens, mapped through `@theme inline`. Pages must use those
+  utilities; Tailwind palette classes for status (`text-emerald-600`,
+  `bg-amber-500/5`) are banned. Brand green is reserved for navigation and
+  primary actions so it can never be read as "success".
+- **One metric contract.** `lib/metrics/catalog.ts` declares every metric's
+  label, formula, period basis (`cash-received` | `billing-period` |
+  `as-of-now`), unit, capability and caveat, plus `ratio`, `collectionRate`
+  and `change` helpers. The catalog is the reference for dashboards, reports
+  and CSV headers; renaming an id is a breaking change.
+- **Charts stay server-rendered; one client island.** `ColumnChart`,
+  `ShareBars` and `Sparkline` remain plain server SVG/HTML with no chart
+  library. `ChartFrame` is the only client component in the reporting stack: it
+  toggles between the chart and a required server-rendered table twin. This
+  revisits the Phase 7 "zero client JS" note deliberately — interaction is
+  limited to a table toggle, and no charting runtime is shipped.
+- **Every figure states its basis.** Arrears is always as-of-now and ignores
+  the window selector; collected uses `receivedAt`; billed uses `periodKey`.
+  Deltas are only shown for like-for-like prior periods — month-to-date is
+  never compared to a full prior month.
+- **Route-level states are part of the shell.** `app/(dashboard)/loading.tsx`,
+  `app/(dashboard)/error.tsx` and `app/not-found.tsx` replace blank frames and
+  the default Next.js error page.
+- **Design system lives in the repo.** `design-system/MASTER.md` is the source
+  of truth for tokens, primitives, chart selection and accessibility gates.
+  New pages compose existing primitives; page-specific deviations belong in
+  `design-system/pages/<page>.md`.
+- **IA: `/analytics` (approved).** The reporting UI lives at
+  `/analytics` and `/analytics/owner`; `/reports` and `/reports/owner` redirect
+  while preserving query parameters. `/api/reports/csv` remains the export
+  endpoint (audit-logged). Navigation labels point to Analytics; report logic
+  stays in `services/reports.ts`.
+- **Attention + owner reporting.** Dashboard now includes a scoped attention
+  queue (arrears >30d, unmatched >24h, lease expiries ≤60d, overdue/high-priority
+  maintenance) and a like-for-like collected MTD delta vs the same days last
+  month via `lib/metrics/catalog.ts`. A print-first owner monthly statement is
+  available at `/analytics/owner`.
+
 ## Still open (needed by Phase 7/8)
 
 1. ~~Real Firebase project ids for dev / staging / production~~ — production is

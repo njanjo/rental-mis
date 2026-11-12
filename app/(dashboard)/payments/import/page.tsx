@@ -115,7 +115,7 @@ export default async function BankImportPage() {
                         <span
                           className={
                             run.status === "succeeded"
-                              ? "rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400"
+                              ? "rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
                               : run.status === "failed"
                                 ? "rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-medium text-destructive"
                                 : "rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground"

@@ -65,9 +65,9 @@ interface BankImportWizardProps {
 }
 
 const MATCH_STYLES: Record<string, string> = {
-  tenant: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
-  unmatched: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-  out_of_scope: "bg-sky-500/10 text-sky-700 dark:text-sky-400",
+  tenant: "bg-success/10 text-success",
+  unmatched: "bg-warning/10 text-warning",
+  out_of_scope: "bg-info/10 text-info",
   duplicate: "bg-muted text-muted-foreground",
 };
 
@@ -280,10 +280,10 @@ export function BankImportWizard({
       </Card>
 
       {showResult && commitState.result ? (
-        <Card className="border-emerald-500/40 bg-emerald-500/5">
+        <Card className="border-success/40 bg-success/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
-              <CheckCircle2 className="size-4 text-emerald-600" />
+              <CheckCircle2 className="size-4 text-success" />
               Statement imported
             </CardTitle>
             <CardDescription>{commitState.message}</CardDescription>
@@ -356,7 +356,7 @@ export function BankImportWizard({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-medium">Column mapping</h3>
                 {mappingDirty ? (
-                  <span className="text-xs text-amber-600 dark:text-amber-400">
+                  <span className="text-xs text-warning">
                     Mapping changed — update the preview before importing.
                   </span>
                 ) : null}
@@ -470,9 +470,9 @@ export function BankImportWizard({
             ) : null}
 
             {preview.issues.length > 0 ? (
-              <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
+              <div className="space-y-2 rounded-lg border border-warning/40 bg-warning/10 p-3">
                 <p className="flex items-center gap-2 text-sm font-medium">
-                  <AlertTriangle className="size-4 text-amber-600" />
+                  <AlertTriangle className="size-4 text-warning" />
                   {preview.issues.length} row
                   {preview.issues.length === 1 ? "" : "s"} need attention
                 </p>

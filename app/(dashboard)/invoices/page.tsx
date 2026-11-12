@@ -230,7 +230,7 @@ export default async function InvoicesPage({
               <AlertTriangle
                 className={
                   summary.overdueMinor > 0
-                    ? "size-4 text-rose-600"
+                    ? "size-4 text-danger"
                     : "size-4 text-muted-foreground"
                 }
               />
@@ -239,7 +239,7 @@ export default async function InvoicesPage({
               <p
                 className={
                   summary.overdueMinor > 0
-                    ? "text-2xl font-semibold tabular-nums tracking-tight text-rose-600"
+                    ? "text-2xl font-semibold tabular-nums tracking-tight text-danger"
                     : "text-2xl font-semibold tabular-nums tracking-tight"
                 }
               >

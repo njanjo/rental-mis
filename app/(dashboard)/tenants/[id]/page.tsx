@@ -7,6 +7,7 @@ import {
   EditTenantDialog,
   TenantStatusDialog,
 } from "@/components/tenants/tenant-dialogs";
+import { AlertBanner } from "@/components/shared/alert-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -69,22 +70,18 @@ export default async function TenantDetailPage({
       />
 
       {tenant.status !== "active" ? (
-        <Card className="mb-4 border-amber-500/40 bg-amber-500/5">
-          <CardContent className="py-3 text-sm">
-            This tenant is marked {tenant.status}. They remain on record so their
-            payment history is preserved.
-          </CardContent>
-        </Card>
+        <AlertBanner tone="warning" className="mb-4">
+          This tenant is marked {tenant.status}. They remain on record so their
+          payment history is preserved.
+        </AlertBanner>
       ) : null}
 
       {tenant.creditBalanceMinor > 0 ? (
-        <Card className="mb-4 border-sky-500/40 bg-sky-500/5">
-          <CardContent className="py-3 text-sm">
-            Holding {formatMoney(tenant.creditBalanceMinor)} of credit from an
-            overpayment. It is applied automatically to the next invoice raised
-            for this tenant.
-          </CardContent>
-        </Card>
+        <AlertBanner tone="info" className="mb-4">
+          Holding {formatMoney(tenant.creditBalanceMinor)} of credit from an
+          overpayment. It is applied automatically to the next invoice raised for
+          this tenant.
+        </AlertBanner>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

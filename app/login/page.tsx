@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import { redirect } from "next/navigation";
-import { CheckCircle2, Clock } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 
 import { LoginForm } from "@/components/auth/login-form";
+import { AlertBanner } from "@/components/shared/alert-banner";
 import { defaultLandingPath } from "@/lib/auth/landing";
 import { APP_NAME } from "@/lib/brand";
 import { getSessionUser } from "@/lib/auth/session";
@@ -72,7 +73,7 @@ export default async function LoginPage({
               "Live occupancy and arrears reporting",
             ].map((item) => (
               <li key={item} className="flex items-start gap-2.5">
-                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-400" />
+                <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-brand-on-dark" />
                 <span>{item}</span>
               </li>
             ))}
@@ -103,13 +104,10 @@ export default async function LoginPage({
           </div>
 
           {showInactiveNotice ? (
-            <div className="mb-6 flex items-start gap-2.5 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3.5 py-3 text-sm text-amber-800 dark:text-amber-300">
-              <Clock className="mt-0.5 size-4 shrink-0 text-amber-600" />
-              <p>
-                You were signed out after 10 minutes of inactivity. Sign in
-                again to continue.
-              </p>
-            </div>
+            <AlertBanner tone="info" className="mb-6">
+              You were signed out after 10 minutes of inactivity. Sign in
+              again to continue.
+            </AlertBanner>
           ) : null}
 
           <div className="mb-8 space-y-1.5">

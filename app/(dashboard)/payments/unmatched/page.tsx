@@ -1,11 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { AlertTriangle, ChevronLeft, Inbox } from "lucide-react";
+import { ChevronLeft, Inbox } from "lucide-react";
 
 import {
   IgnoreUnmatchedDialog,
   ResolveUnmatchedDialog,
 } from "@/components/payments/payment-dialogs";
+import { AlertBanner } from "@/components/shared/alert-banner";
 import { DataTable, type DataTableColumn } from "@/components/shared/data-table";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FilterBar } from "@/components/shared/filter-bar";
@@ -153,17 +154,15 @@ export default async function UnmatchedPaymentsPage({
         }
       />
 
-      <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
-        <p className="flex items-center gap-2 font-medium">
-          <AlertTriangle className="size-4 text-amber-600" />
-          The queue is shared across properties
-        </p>
-        <p className="mt-1 text-muted-foreground">
-          A payment with no tenant has no property to scope by, so anyone who
-          can reconcile payments sees the same queue. Matching still requires
-          access to the chosen tenant&apos;s property.
-        </p>
-      </div>
+      <AlertBanner
+        tone="warning"
+        className="mb-4"
+        title="The queue is shared across properties"
+      >
+        A payment with no tenant has no property to scope by, so anyone who can
+        reconcile payments sees the same queue. Matching still requires access to
+        the chosen tenant&apos;s property.
+      </AlertBanner>
 
       <FilterBar
         searchPlaceholder="Search is not used in the queue"

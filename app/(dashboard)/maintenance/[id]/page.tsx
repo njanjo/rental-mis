@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { UpdateMaintenanceDialog } from "@/components/maintenance/maintenance-dialogs";
+import { AlertBanner } from "@/components/shared/alert-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -91,21 +92,17 @@ export default async function MaintenanceDetailPage({
       />
 
       {request.status === "resolved" ? (
-        <Card className="mb-4 border-emerald-500/40 bg-emerald-500/5">
-          <CardContent className="py-3 text-sm">
-            Resolved {formatDateTime(request.resolvedAt)}
-            {request.resolutionNote ? `: ${request.resolutionNote}` : "."}
-          </CardContent>
-        </Card>
+        <AlertBanner tone="success" className="mb-4">
+          Resolved {formatDateTime(request.resolvedAt)}
+          {request.resolutionNote ? `: ${request.resolutionNote}` : "."}
+        </AlertBanner>
       ) : null}
 
       {request.status === "cancelled" ? (
-        <Card className="mb-4 border-slate-500/40 bg-slate-500/5">
-          <CardContent className="py-3 text-sm">
-            Cancelled {formatDateTime(request.closedAt)}
-            {request.resolutionNote ? `: ${request.resolutionNote}` : "."}
-          </CardContent>
-        </Card>
+        <AlertBanner tone="info" className="mb-4">
+          Cancelled {formatDateTime(request.closedAt)}
+          {request.resolutionNote ? `: ${request.resolutionNote}` : "."}
+        </AlertBanner>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

@@ -16,6 +16,7 @@ import {
   RenewLeaseDialog,
   TerminateLeaseButton,
 } from "@/components/leases/lease-dialogs";
+import { AlertBanner } from "@/components/shared/alert-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -85,21 +86,17 @@ export default async function LeaseDetailPage({
       />
 
       {lease.status === "pending" ? (
-        <Card className="mb-4 border-amber-500/40 bg-amber-500/5">
-          <CardContent className="py-3 text-sm">
-            This lease is pending. The unit stays vacant and the tenant keeps any
-            existing tenancy until it is activated on the move-in date.
-          </CardContent>
-        </Card>
+        <AlertBanner tone="warning" className="mb-4">
+          This lease is pending. The unit stays vacant and the tenant keeps any
+          existing tenancy until it is activated on the move-in date.
+        </AlertBanner>
       ) : null}
 
       {lease.status === "terminated" ? (
-        <Card className="mb-4 border-rose-500/40 bg-rose-500/5">
-          <CardContent className="py-3 text-sm">
-            Terminated {formatDate(lease.terminatedAt)}
-            {lease.terminationReason ? `: ${lease.terminationReason}` : "."}
-          </CardContent>
-        </Card>
+        <AlertBanner tone="danger" className="mb-4">
+          Terminated {formatDate(lease.terminatedAt)}
+          {lease.terminationReason ? `: ${lease.terminationReason}` : "."}
+        </AlertBanner>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

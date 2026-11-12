@@ -35,12 +35,14 @@ import { ServiceError } from "@/lib/errors";
 import { adminDb } from "@/lib/firebase/admin";
 import type {
   Invoice,
+  Lease,
   Payment,
   PaymentProvider,
   PaymentStatus,
   Property,
   Tenant,
   Unit,
+  UnmatchedPayment,
 } from "@/lib/types";
 import type { Capability } from "@/lib/auth/permissions";
 
@@ -215,6 +217,72 @@ function signedSum(payments: Payment[]): number {
   );
 }
 
+export interface UnmatchedQueueRow {
+  id: string;
+  paymentId: string;
+  reason: string;
+  createdAt: unknown;
+  /** Resolved from the payment so scoping and ageing can use the ledger. */
+  propertyId?: string;
+  receivedAt?: unknown;
+  amountMinor: number;
+}
+
+/**
+ * The live review queue with the payment denormalised onto each row. Queue
+ * rows carry no property of their own, so scoping has to follow the payment.
+ */
+async function unmatchedQueueRows(
+  accountId: string,
+  scope: string[] | null,
+): Promise<UnmatchedQueueRow[]> {
+  const snapshot = await adminDb()
+    .collection("unmatchedPayments")
+    .where("accountId", "==", accountId)
+    .where("reviewStatus", "in", ["pending", "assigned"])
+    .limit(SCAN_LIMIT)
+    .get();
+
+  const queue = snapshot.docs.map((doc) => {
+    const data = doc.data() as UnmatchedPayment;
+    return {
+      id: doc.id,
+      paymentId: data.paymentId,
+      reason: data.reason,
+      createdAt: data.createdAt,
+    };
+  });
+  const paymentIds = queue.map((row) => row.paymentId);
+  const payments = new Map<string, Payment>();
+  for (let index = 0; index < paymentIds.length; index += 30) {
+    const chunk = paymentIds.slice(index, index + 30).filter(Boolean);
+    if (chunk.length === 0) continue;
+    const docs = await adminDb()
+      .collection(PAYMENTS)
+      .where("accountId", "==", accountId)
+      .where(FieldPath.documentId(), "in", chunk)
+      .get();
+    docs.docs.forEach((doc) => {
+      payments.set(doc.id, doc.data() as Payment);
+    });
+  }
+
+  return queue
+    .map((row) => {
+      const payment = row.paymentId ? payments.get(row.paymentId) : undefined;
+      return {
+        id: row.id,
+        paymentId: row.paymentId,
+        reason: row.reason,
+        createdAt: row.createdAt,
+        propertyId: payment?.propertyId,
+        receivedAt: payment?.receivedAt,
+        amountMinor: payment?.amountMinor ?? 0,
+      };
+    })
+    .filter((row) => inScope(scope, row.propertyId));
+}
+
 // ---------------------------------------------------------------------------
 // Dashboard + report aggregations
 // ---------------------------------------------------------------------------
@@ -229,41 +297,12 @@ export async function dashboardStats(
   const now = new Date();
   const currentMonth = monthBounds(nairobiMonthKey(now));
 
-  const [monthPayments, units, invoices, unmatchedSnapshot] = await Promise.all([
+  const [monthPayments, units, invoices, unmatchedQueue] = await Promise.all([
     paymentsSince(accountId, currentMonth.start, scope),
     activeUnits(accountId, scope),
     outstandingInvoices(accountId, scope),
-    adminDb()
-      .collection("unmatchedPayments")
-      .where("accountId", "==", accountId)
-      .where("reviewStatus", "in", ["pending", "assigned"])
-      .limit(SCAN_LIMIT)
-      .get(),
+    unmatchedQueueRows(accountId, scope),
   ]);
-
-  // Unmatched rows carry no propertyId of their own; scope them by finding the
-  // property of the payment each queue row points at.
-  const queuePaymentIds = unmatchedSnapshot.docs.map(
-    (doc) => (doc.data() as { paymentId: string }).paymentId,
-  );
-  const paymentProperties = new Map<string, string | undefined>();
-  for (let index = 0; index < queuePaymentIds.length; index += 30) {
-    const chunk = queuePaymentIds.slice(index, index + 30);
-    const docs = await adminDb()
-      .collection(PAYMENTS)
-      .where("accountId", "==", accountId)
-      .where(FieldPath.documentId(), "in", chunk)
-      .get();
-    docs.docs.forEach((doc) => {
-      paymentProperties.set(doc.id, (doc.data() as Payment).propertyId);
-    });
-  }
-  const unmatchedCount = unmatchedSnapshot.docs.filter((doc) =>
-    inScope(
-      scope,
-      paymentProperties.get((doc.data() as { paymentId: string }).paymentId),
-    ),
-  ).length;
 
   return {
     occupancy: {
@@ -280,7 +319,7 @@ export async function dashboardStats(
       0,
     ),
     arrearsInvoiceCount: invoices.length,
-    unmatchedCount,
+    unmatchedCount: unmatchedQueue.length,
   };
 }
 
@@ -451,6 +490,105 @@ function groupTotals(
     .sort((a, b) => b.minor - a.minor);
 }
 
+export interface OwnerPropertyRow {
+  propertyId: string;
+  propertyName: string;
+  billedMinor: number;
+  collectedMinor: number;
+  arrearsMinor: number;
+  occupiedUnits: number;
+  totalUnits: number;
+}
+
+/**
+ * Per-property owner view for one Nairobi month. Billed is grouped by invoice
+ * periodKey (billing-period basis); collected is money received in that month
+ * (cash-received basis); arrears is live as-of-now and stated separately.
+ */
+export async function ownerMonthlyReport(
+  actor: SessionUser,
+  monthKey: string,
+): Promise<{ monthKey: string; rows: OwnerPropertyRow[]; asOf: string }> {
+  const scope = assertAndScope(actor, "view_financials");
+  const accountId = requireAccount(actor);
+  const bounds = monthBounds(monthKey);
+
+  const [payments, invoicesSnap, arrearsInvoices, units, properties] = await Promise.all([
+    paymentsSince(accountId, bounds.start, scope),
+    adminDb()
+      .collection(INVOICES)
+      .where("accountId", "==", accountId)
+      .where("periodKey", "==", monthKey)
+      .limit(SCAN_LIMIT)
+      .get(),
+    outstandingInvoices(accountId, scope),
+    activeUnits(accountId, scope),
+    propertyNames(accountId, scope),
+  ]);
+
+  const monthPayments = payments.filter(
+    (payment) =>
+      toMillis(payment.receivedAt) < bounds.end.getTime() &&
+      CASH_STATUSES.includes(payment.status),
+  );
+  const billedInvoices = invoicesSnap.docs
+    .map((doc) => doc.data() as Invoice)
+    .filter((invoice) => inScope(scope, invoice.propertyId));
+
+  const byProperty = new Map<string, OwnerPropertyRow>();
+  const ensure = (propertyId: string) => {
+    if (!byProperty.has(propertyId)) {
+      byProperty.set(propertyId, {
+        propertyId,
+        propertyName: properties.get(propertyId) ?? "Not matched to a property",
+        billedMinor: 0,
+        collectedMinor: 0,
+        arrearsMinor: 0,
+        occupiedUnits: 0,
+        totalUnits: 0,
+      });
+    }
+    return byProperty.get(propertyId)!;
+  };
+
+  for (const [id] of properties) ensure(id);
+
+  for (const payment of monthPayments) {
+    const row = ensure(payment.propertyId ?? "unassigned");
+    row.collectedMinor += payment.amountMinor ?? 0;
+  }
+  for (const invoice of billedInvoices) {
+    const row = ensure(invoice.propertyId ?? "unassigned");
+    row.billedMinor += invoice.amountDueMinor ?? 0;
+  }
+  for (const invoice of arrearsInvoices) {
+    const row = ensure(invoice.propertyId ?? "unassigned");
+    row.arrearsMinor += invoice.balanceMinor ?? 0;
+  }
+  for (const unit of units) {
+    const row = ensure(unit.propertyId ?? "unassigned");
+    row.totalUnits += 1;
+    if (unit.status === "occupied") row.occupiedUnits += 1;
+  }
+
+  const rows = [...byProperty.values()]
+    .filter(
+      (row) =>
+        row.propertyId !== "unassigned" ||
+        row.billedMinor !== 0 ||
+        row.collectedMinor !== 0 ||
+        row.arrearsMinor !== 0 ||
+        row.totalUnits > 0,
+    )
+    .sort((a, b) => a.propertyName.localeCompare(b.propertyName));
+
+  return {
+    monthKey,
+    rows,
+    asOf: new Date().toISOString(),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // CSV export row builders
 // ---------------------------------------------------------------------------
@@ -546,6 +684,195 @@ export async function arrearsForExport(
       status: invoice.status,
     }))
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+}
+
+// ---------------------------------------------------------------------------
+// Attention queue and dashboard deltas
+// ---------------------------------------------------------------------------
+
+export type AttentionTone = "warning" | "danger" | "info";
+
+export interface AttentionItem {
+  id: string;
+  tone: AttentionTone;
+  title: string;
+  detail: string;
+  href: string;
+  /** Minor units when the item is money-valued. */
+  minor?: number;
+  count?: number;
+}
+
+function daysSince(instant: unknown, nowMs: number): number {
+  const ms = toMillis(instant);
+  if (!Number.isFinite(ms) || ms === Number.POSITIVE_INFINITY) return 0;
+  return Math.max(0, (nowMs - ms) / 86_400_000);
+}
+
+export async function attentionQueue(
+  actor: SessionUser,
+  options: { limit?: number } = {},
+): Promise<AttentionItem[]> {
+  const scope = assertAndScope(actor, "view_financials");
+  const accountId = requireAccount(actor);
+  const limit = Math.min(Math.max(options.limit ?? 8, 1), 20);
+  const nowMs = Date.now();
+  const todayDays = Math.floor(nowMs / 86_400_000);
+  const in60 = Timestamp.fromMillis(nowMs + 60 * 86_400_000);
+
+  const [
+    invoices,
+    unmatchedQueue,
+    leasesSnap,
+    maintenanceSnap,
+    properties,
+  ] = await Promise.all([
+    outstandingInvoices(accountId, scope),
+    unmatchedQueueRows(accountId, scope),
+    adminDb()
+      .collection("leases")
+      .where("accountId", "==", accountId)
+      .where("status", "==", "active")
+      .where("endDate", "<=", in60)
+      .limit(SCAN_LIMIT)
+      .get(),
+    adminDb()
+      .collection("maintenanceRequests")
+      .where("accountId", "==", accountId)
+      .where("status", "in", ["open", "assigned", "in_progress"])
+      .limit(SCAN_LIMIT)
+      .get(),
+    propertyNames(accountId, scope),
+  ]);
+
+  const items: AttentionItem[] = [];
+
+  const severeArrears = invoices.filter((invoice) => {
+    const days = todayDays - Math.floor(toMillis(invoice.dueDate) / 86_400_000);
+    return days > 30;
+  });
+  if (severeArrears.length > 0) {
+    const minor = severeArrears.reduce(
+      (sum, invoice) => sum + (invoice.balanceMinor ?? 0),
+      0,
+    );
+    items.push({
+      id: "arrears-30d",
+      tone: "danger",
+      title: "Arrears over 30 days",
+      detail: `${severeArrears.length} invoice${severeArrears.length === 1 ? "" : "s"} overdue beyond 30 days`,
+      href: "/invoices?status=overdue",
+      minor,
+      count: severeArrears.length,
+    });
+  }
+
+  const staleUnmatched = unmatchedQueue.filter(
+    (row) => daysSince(row.receivedAt ?? row.createdAt, nowMs) > 1,
+  );
+  if (staleUnmatched.length > 0) {
+    const minor = staleUnmatched.reduce((sum, row) => sum + row.amountMinor, 0);
+    items.push({
+      id: "unmatched-stale",
+      tone: "warning",
+      title: "Unmatched payments over 24 hours",
+      detail: `${staleUnmatched.length} payment${staleUnmatched.length === 1 ? "" : "s"} waiting for review`,
+      href: "/payments/unmatched",
+      minor,
+      count: staleUnmatched.length,
+    });
+  }
+
+  const expiringLeases = leasesSnap.docs
+    .map((doc) => ({ ...(doc.data() as Lease), id: doc.id }))
+    .filter((lease) => inScope(scope, lease.propertyId))
+    .filter((lease) => toMillis(lease.endDate) >= nowMs);
+  if (expiringLeases.length > 0) {
+    expiringLeases.sort((a, b) => toMillis(a.endDate) - toMillis(b.endDate));
+    const soonest = expiringLeases[0];
+    const daysLeft = Math.max(
+      0,
+      Math.ceil((toMillis(soonest.endDate) - nowMs) / 86_400_000),
+    );
+    items.push({
+      id: "lease-expiries-60d",
+      tone: "warning",
+      title: "Leases expiring within 60 days",
+      detail: `${expiringLeases.length} lease${expiringLeases.length === 1 ? "" : "s"} · next in ${daysLeft} day${daysLeft === 1 ? "" : "s"}`,
+      href: "/leases?status=active",
+      count: expiringLeases.length,
+    });
+  }
+
+  const overdueMaintenance = maintenanceSnap.docs
+    .map((doc) => doc.data() as { propertyId?: string; priority?: string; createdAt?: unknown })
+    .filter((item) => inScope(scope, item.propertyId))
+    .filter((item) => item.priority === "urgent" || item.priority === "high" || daysSince(item.createdAt, nowMs) > 7);
+  if (overdueMaintenance.length > 0) {
+    items.push({
+      id: "maintenance-overdue",
+      tone: "info",
+      title: "Maintenance needing attention",
+      detail: `${overdueMaintenance.length} open request${overdueMaintenance.length === 1 ? "" : "s"} (urgent/high or older than 7 days)`,
+      href: "/maintenance",
+      count: overdueMaintenance.length,
+    });
+  }
+
+  // Keep the highest-risk items first and make the list scannable.
+  const rank: Record<AttentionTone, number> = { danger: 0, warning: 1, info: 2 };
+  items.sort((a, b) => rank[a.tone] - rank[b.tone] || (b.minor ?? 0) - (a.minor ?? 0));
+  void properties; // reserved for richer detail copy in a follow-up
+  return items.slice(0, limit);
+}
+
+export interface CollectedComparison {
+  currentMinor: number;
+  previousMinor: number;
+  /** Like-for-like: first N Nairobi days of this month vs same span last month. */
+  basisLabel: string;
+}
+
+/**
+ * Month-to-date collections compared to the same number of days in the previous
+ * Nairobi month. Comparing MTD to a full prior month would overstate decline.
+ */
+export async function collectedMtdComparison(
+  actor: SessionUser,
+): Promise<CollectedComparison> {
+  const scope = assertAndScope(actor, "view_financials");
+  const accountId = requireAccount(actor);
+  const now = new Date();
+  const current = monthBounds(nairobiMonthKey(now));
+  const elapsedMs = Math.max(0, now.getTime() - current.start.getTime());
+
+  const prevEnd = new Date(current.start.getTime() - 1);
+  const prev = monthBounds(nairobiMonthKey(prevEnd));
+  const prevComparableEnd = new Date(
+    Math.min(prev.start.getTime() + elapsedMs, prev.end.getTime() - 1),
+  );
+
+  const [currentPayments, previousPayments] = await Promise.all([
+    paymentsSince(accountId, current.start, scope),
+    paymentsSince(accountId, prev.start, scope),
+  ]);
+
+  const nowMs = now.getTime();
+  const prevEndMs = prevComparableEnd.getTime() + 1;
+  const prevStartMs = prev.start.getTime();
+
+  return {
+    currentMinor: signedSum(
+      currentPayments.filter((p) => toMillis(p.receivedAt) < nowMs),
+    ),
+    previousMinor: signedSum(
+      previousPayments.filter((p) => {
+        const ms = toMillis(p.receivedAt);
+        return ms >= prevStartMs && ms < prevEndMs;
+      }),
+    ),
+    basisLabel: "vs same days last month",
+  };
 }
 
 // ---------------------------------------------------------------------------

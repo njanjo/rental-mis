@@ -15,6 +15,7 @@ import {
   EditPropertyDialog,
   RestorePropertyButton,
 } from "@/components/properties/property-dialogs";
+import { AlertBanner } from "@/components/shared/alert-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -92,12 +93,10 @@ export default async function PropertyDetailPage({
       />
 
       {!property.active ? (
-        <Card className="mb-4 border-amber-500/40 bg-amber-500/5">
-          <CardContent className="py-3 text-sm">
-            This property is archived. Its history is preserved, but it no longer
-            accepts new leases.
-          </CardContent>
-        </Card>
+        <AlertBanner tone="warning" className="mb-4">
+          This property is archived. Its history is preserved, but it no longer
+          accepts new leases.
+        </AlertBanner>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

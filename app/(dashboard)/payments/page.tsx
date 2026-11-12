@@ -97,7 +97,7 @@ const columns: DataTableColumn<PaymentListItem>[] = [
       <span
         className={
           payment.amountMinor < 0
-            ? "whitespace-nowrap text-sm font-medium tabular-nums text-rose-600"
+            ? "whitespace-nowrap text-sm font-medium tabular-nums text-danger"
             : "whitespace-nowrap text-sm font-medium tabular-nums"
         }
       >
@@ -226,7 +226,7 @@ export default async function PaymentsPage({
                   <Inbox className="size-4" />
                   Unmatched
                   {openUnmatched > 0 ? (
-                    <span className="ml-1 rounded-full bg-amber-500/15 px-1.5 text-xs font-medium text-amber-700 dark:text-amber-400">
+                    <span className="ml-1 rounded-full bg-warning/15 px-1.5 text-xs font-medium text-warning">
                       {openUnmatched}
                     </span>
                   ) : null}

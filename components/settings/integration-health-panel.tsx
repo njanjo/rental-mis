@@ -27,7 +27,7 @@ function CheckRow({ check }: { check: ConfigCheck }) {
   return (
     <li className="flex items-start gap-2">
       {check.status === "ok" ? (
-        <Check className="mt-0.5 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+        <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
       ) : (
         <X className="mt-0.5 size-3.5 shrink-0 text-destructive" />
       )}
@@ -54,7 +54,7 @@ function ProviderSection({
     <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-2">
         {configured ? (
-          <Check className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          <Check className="size-4 shrink-0 text-success" />
         ) : (
           <X className="size-4 shrink-0 text-destructive" />
         )}

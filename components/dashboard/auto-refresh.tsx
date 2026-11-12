@@ -22,7 +22,7 @@ export function AutoRefresh({ seconds = 60 }: { seconds?: number }) {
 
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-      <Activity className="size-3.5 animate-pulse text-emerald-600" />
+      <Activity className="size-3.5 animate-pulse text-success" />
       Auto-refreshes every {seconds}s
     </span>
   );

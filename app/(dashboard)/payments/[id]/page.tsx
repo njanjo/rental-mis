@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 
 import { ReversePaymentDialog } from "@/components/payments/payment-dialogs";
+import { AlertBanner } from "@/components/shared/alert-banner";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -91,58 +92,55 @@ export default async function PaymentDetailPage({
       />
 
       {payment.status === "reversal" ? (
-        <Card className="mb-4 border-rose-500/40 bg-rose-500/5">
-          <CardContent className="py-3 text-sm">
-            Reversal entry for{" "}
-            {payment.reversalOfPaymentId ? (
-              <Link
-                href={`/payments/${payment.reversalOfPaymentId}`}
-                className="font-medium hover:underline"
-              >
-                the original payment
-              </Link>
-            ) : (
-              "an earlier payment"
-            )}
-            . {payment.reversalReason ?? "No reason recorded."}
-          </CardContent>
-        </Card>
+        <AlertBanner tone="danger" className="mb-4">
+          Reversal entry for{" "}
+          {payment.reversalOfPaymentId ? (
+            <Link
+              href={`/payments/${payment.reversalOfPaymentId}`}
+              className="font-medium hover:underline"
+            >
+              the original payment
+            </Link>
+          ) : (
+            "an earlier payment"
+          )}
+          . {payment.reversalReason ?? "No reason recorded."}
+        </AlertBanner>
       ) : payment.status === "reversed" ? (
-        <Card className="mb-4 border-rose-500/40 bg-rose-500/5">
-          <CardContent className="space-y-1 py-3 text-sm">
-            <p>
-              Reversed on {formatDateTime(payment.reversedAt)}
-              {payment.reversedByName ? ` by ${payment.reversedByName}` : ""}.
-            </p>
-            <p className="text-muted-foreground">
-              {payment.reversalReason ?? "No reason recorded."}
-            </p>
-            {payment.reversalPaymentId ? (
-              <Link
-                href={`/payments/${payment.reversalPaymentId}`}
-                className="inline-flex items-center gap-1 font-medium hover:underline"
-              >
-                View the compensating entry
-                <ArrowRight className="size-3.5" />
-              </Link>
-            ) : null}
-          </CardContent>
-        </Card>
+        <AlertBanner tone="danger" className="mb-4">
+          <p>
+            Reversed on {formatDateTime(payment.reversedAt)}
+            {payment.reversedByName ? ` by ${payment.reversedByName}` : ""}.
+          </p>
+          <p className="text-muted-foreground">
+            {payment.reversalReason ?? "No reason recorded."}
+          </p>
+          {payment.reversalPaymentId ? (
+            <Link
+              href={`/payments/${payment.reversalPaymentId}`}
+              className="inline-flex items-center gap-1 font-medium hover:underline"
+            >
+              View the compensating entry
+              <ArrowRight className="size-3.5" />
+            </Link>
+          ) : null}
+        </AlertBanner>
       ) : payment.status === "unmatched" ? (
-        <Card className="mb-4 border-amber-500/40 bg-amber-500/5">
-          <CardContent className="flex flex-wrap items-center justify-between gap-2 py-3 text-sm">
-            <span>
-              This payment has not been matched to a tenant yet. Nothing has been
-              allocated.
-            </span>
+        <AlertBanner
+          tone="warning"
+          className="mb-4"
+          action={
             <Button variant="outline" size="sm" asChild>
               <Link href="/payments/unmatched">
                 <Inbox className="size-4" />
                 Unmatched queue
               </Link>
             </Button>
-          </CardContent>
-        </Card>
+          }
+        >
+          This payment has not been matched to a tenant yet. Nothing has been
+          allocated.
+        </AlertBanner>
       ) : null}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -156,7 +154,7 @@ export default async function PaymentDetailPage({
             <p
               className={
                 payment.amountMinor < 0
-                  ? "text-xl font-semibold tabular-nums text-rose-600"
+                  ? "text-xl font-semibold tabular-nums text-danger"
                   : "text-xl font-semibold tabular-nums"
               }
             >
@@ -263,7 +261,7 @@ export default async function PaymentDetailPage({
                     <p
                       className={
                         allocation.amountMinor < 0
-                          ? "text-sm font-medium tabular-nums text-rose-600"
+                          ? "text-sm font-medium tabular-nums text-danger"
                           : "text-sm font-medium tabular-nums"
                       }
                     >

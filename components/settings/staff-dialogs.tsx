@@ -147,7 +147,7 @@ function InviteStaffForm({
               {copied ? "Copied" : "Copy"}
             </Button>
           </div>
-          <p className="text-xs text-amber-600 dark:text-amber-400">
+          <p className="text-xs text-warning">
             This password is shown only once — ask the staff member to change
             it on /account.
           </p>

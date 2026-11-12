@@ -23,7 +23,11 @@ export function ColumnChart({ points }: { points: BarPoint[] }) {
   }
 
   return (
-    <div className="flex h-40 items-end gap-1.5">
+    <div
+      className="flex h-40 items-end gap-1.5"
+      role="img"
+      aria-label={`Column chart, ${points.length} periods, peak ${formatMoney(max)}`}
+    >
       {points.map((point) => {
         // Keep the shortest visible bar at 4% so trace amounts still show.
         const heightPct = Math.max((point.minor / max) * 96, 4);
@@ -35,7 +39,7 @@ export function ColumnChart({ points }: { points: BarPoint[] }) {
           >
             <div className="flex w-full flex-1 items-end">
               <div
-                className="w-full rounded-t-md bg-primary/80"
+                className="w-full rounded-t-md bg-chart-1"
                 style={{ height: `${heightPct}%` }}
               />
             </div>
@@ -76,9 +80,10 @@ export function ShareBars({ points }: { points: BarPoint[] }) {
           <div
             className="mt-1 h-2 rounded-full bg-muted"
             title={`${point.label}: ${formatMoney(point.minor)}`}
+            aria-hidden
           >
             <div
-              className="h-full rounded-full bg-sky-500/80"
+              className="h-full rounded-full bg-chart-1"
               style={{
                 width: `${Math.max((point.minor / max) * 100, 1.5)}%`,
               }}

@@ -16,9 +16,9 @@ export function FormAlert({
 
   if (state.status === "success") {
     return (
-      <Alert className={cn("border-emerald-500/30 bg-emerald-500/5", className)}>
-        <CircleCheck className="size-4 text-emerald-600" />
-        <AlertDescription className="text-emerald-800 dark:text-emerald-300">
+      <Alert className={cn("border-success/30 bg-success/5", className)}>
+        <CircleCheck className="size-4 text-success" />
+        <AlertDescription className="text-foreground">
           {state.message}
         </AlertDescription>
       </Alert>
