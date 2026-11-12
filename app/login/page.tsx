@@ -33,13 +33,14 @@ export default async function LoginPage({
 
   return (
     <div className="grid min-h-svh lg:grid-cols-[1.05fr_1fr]">
-      <aside className="relative hidden overflow-hidden bg-slate-950 text-slate-50 lg:flex lg:flex-col lg:justify-between lg:p-12">
+      <aside className="relative hidden overflow-hidden bg-brand-panel text-brand-panel-foreground lg:flex lg:flex-col lg:justify-between lg:p-12">
+        <div aria-hidden className="aurora pointer-events-none absolute inset-0" />
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_80%_at_0%_0%,rgba(16,185,129,0.22),transparent_55%),radial-gradient(100%_70%_at_100%_100%,rgba(59,130,246,0.18),transparent_60%)]"
+          className="bg-grid pointer-events-none absolute inset-0 opacity-[0.14]"
         />
         <div className="relative flex items-center gap-3">
-          <span className="flex size-10 items-center justify-center rounded-xl bg-white/10 ring-1 ring-white/15">
+          <span className="flex size-10 items-center justify-center rounded-xl bg-brand-panel-foreground/10 ring-1 ring-brand-panel-foreground/15">
                 <Image
                   src="/icon.svg"
                   alt={APP_NAME}
@@ -50,7 +51,7 @@ export default async function LoginPage({
               </span>
           <div>
             <p className="text-sm font-semibold tracking-wide">{APP_NAME}</p>
-            <p className="text-xs text-slate-400">Property operations · Kenya</p>
+            <p className="text-xs text-brand-panel-foreground/55">Property operations · Kenya</p>
           </div>
         </div>
 
@@ -59,13 +60,13 @@ export default async function LoginPage({
             <h1 className="text-3xl font-semibold leading-tight tracking-tight">
               One ledger for rent, arrears and collections.
             </h1>
-            <p className="text-sm leading-relaxed text-slate-300">
+            <p className="text-sm leading-relaxed text-brand-panel-foreground/70">
               M-Pesa and bank transactions reconcile to invoices automatically.
               Anything ambiguous waits in a review queue — never guessed.
             </p>
           </div>
 
-          <ul className="space-y-3 text-sm text-slate-300">
+          <ul className="space-y-3 text-sm text-brand-panel-foreground/70">
             {[
               "Properties, units, tenants and leases in one place",
               "Idempotent payment reconciliation",
@@ -80,7 +81,7 @@ export default async function LoginPage({
           </ul>
         </div>
 
-        <p className="relative text-xs text-slate-500">
+        <p className="relative text-xs text-brand-panel-foreground/40">
           Staff access only. Tenants pay by M-Pesa or bank and receive SMS — no
           portal, no login.
         </p>

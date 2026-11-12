@@ -21,16 +21,27 @@ Constraints that shape the UI:
 - Roles are enforced server-side. The UI may hide what a role cannot do, but
   hiding is never the security boundary.
 
-## 2. Visual direction — Emerald "Boma"
+## 2. Visual direction — "Boma 21" (21st.dev-inspired)
 
-Calm, dense, trustworthy. Swiss/functional discipline over decoration.
+Dark-first, calm, dense, trustworthy. Neutral surfaces let a single emerald
+accent carry the brand.
 
-- Brand green appears in navigation, primary actions and the wordmark **only**.
+- The product defaults to dark (`class="dark"`); light is a first-class peer
+  theme, not an afterthought.
+- Canvas and cards are **true neutral**, never green-tinted. Emerald appears
+  only in primary actions, active navigation and the wordmark.
+- Structure is carried by **hairline borders** (`--hairline`, ~8–9% contrast)
+  plus soft elevation tokens, not heavy dividers.
+- Micro-labels (`label-micro`): Geist Mono, 10px, uppercase, wide tracking.
+  Use them for KPI labels, table heads and section eyebrows.
+- One static emerald **spotlight** wash may fade in on hover (CSS only). No
+  pointer-tracking JS, no animated gradient borders, no gradient text.
+- Glass/blur is reserved for fixed chrome (topbar, command palette). Never on
+  data rows or static cards.
 - Semantic colours are separate tokens. Never reuse `--primary` to mean
   "success", and never use brand green for status.
 - Amber is reserved for money or work at risk. Red = confirmed loss.
-- No glassmorphism, no gradient text, no emoji as icons.
-- Icons: lucide only, sizes 14 / 16 / 20 / 24.
+- No emoji as icons. Icons: lucide only, sizes 14 / 16 / 20 / 24.
 
 ## 3. Tokens
 
@@ -42,13 +53,15 @@ never a Tailwind palette class (`text-emerald-600` is banned).
 | --- | --- | --- |
 | Canvas | `--background` | `bg-background` |
 | Surface | `--card` | `bg-card` |
-| Quiet surface | `--muted` | `bg-muted` |
+| Raised/quiet surface | `--surface` | `bg-surface` |
+| Hairline | `--hairline` | `border-hairline`, `ring-hairline` |
 | Brand | `--primary` | `bg-primary`, `text-primary` |
 | Success | `--success` | `bg-success/10 text-success` |
 | At risk | `--warning` | `bg-warning/10 text-warning` |
 | Loss | `--danger` | `bg-danger/10 text-danger` |
 | System | `--info` | `bg-info/10 text-info` |
 | Neutral state | `--state-neutral` | `bg-state-neutral/10 text-state-neutral` |
+| Always-dark panel | `--brand-panel` | `bg-brand-panel text-brand-panel-foreground` |
 
 Data ramp: `chart-1` emerald, `chart-2` teal, `chart-3` blue, `chart-4` amber,
 `chart-5` rose, `chart-6` violet. Series order is fixed; never reorder per
@@ -73,9 +86,10 @@ only for a single high-emphasis element per view.
 - 8px rhythm. Card padding 16px (`px-4`), page gutter 16/24px.
 - Card gap: 4px between header rule and content, 12px between cards.
 - Table rows 36px default; 32px dense mode.
-- Radius: `rounded-lg` (8px) controls, `rounded-xl` (10px) cards.
-- Elevation: borders carry structure. Shadows only for overlays
-  (dialog, popover, dropdown), never for static cards.
+- Radius: `rounded-lg` (10px) controls, `rounded-2xl` (14px) cards.
+- Elevation: `shadow-e1` for static cards, `shadow-e2` for popovers and
+  dialogs. Elevation is soft and low-contrast — it must never read as a drop
+  shadow. Hairline borders still carry most structure.
 
 ## 6. Components
 
@@ -94,6 +108,8 @@ Every screen composes from these. Do not fork them.
 | `DataTable` | `components/shared/data-table.tsx` | Presentational only. Sorting/paging stay server-side. |
 | `EmptyState` | `components/shared/empty-state.tsx` | Every list and table needs one. |
 | `PageHeader` | `components/shared/page-header.tsx` | Title + description + actions. |
+| `ThemeToggle` | `components/layout/theme-toggle.tsx` | Dark default; light parity. One tap. |
+| `CommandMenu` | `components/layout/command-menu.tsx` | Role-filtered module switcher. ⌘K / Ctrl+K and the topbar search pill. |
 
 Route-level states: `app/(dashboard)/loading.tsx`, `app/(dashboard)/error.tsx`,
 `app/not-found.tsx`. New segments inherit the loading shell; add a segment

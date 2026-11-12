@@ -60,6 +60,7 @@ function DeltaChip({ delta }: { delta: StatDelta }) {
 /**
  * A KPI is never a naked number: it carries its period context (hint), a
  * comparison (delta), an optional target/sparkline slot, and a drill-down.
+ * The card gets a static emerald spotlight that fades in on hover.
  */
 export function Stat({
   label,
@@ -85,27 +86,27 @@ export function Stat({
   const body = (
     <Card
       className={cn(
-        "h-full gap-0 py-0 transition-colors",
-        href && "hover:bg-accent/40 hover:ring-primary/40",
+        "spotlight h-full gap-0 py-0 transition-colors",
+        href && "hover:ring-primary/30",
         className,
       )}
     >
-      <CardHeader className="flex flex-row items-center justify-between gap-2 px-4 pt-3.5 pb-0">
-        <p className="truncate text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          {label}
-        </p>
+      <CardHeader className="flex flex-row items-center justify-between gap-2 px-4 pt-4 pb-0">
+        <p className="label-micro truncate">{label}</p>
         {Icon ? (
-          <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted/70 text-muted-foreground ring-1 ring-hairline">
+            <Icon className="size-3.5" aria-hidden />
+          </span>
         ) : null}
       </CardHeader>
-      <CardContent className="px-4 pt-1.5 pb-3.5">
+      <CardContent className="px-4 pt-2 pb-4">
         <div className="flex items-end justify-between gap-3">
-          <p className="font-mono text-2xl font-semibold tabular-nums tracking-tight">
+          <p className="font-mono text-3xl font-semibold tabular-nums tracking-tight">
             {value}
           </p>
           {sparkline ? <div className="shrink-0">{sparkline}</div> : null}
         </div>
-        <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+        <div className="mt-1.5 flex items-center gap-1.5 text-xs text-muted-foreground">
           {delta ? <DeltaChip delta={delta} /> : null}
           {hint ? <span className="truncate">{hint}</span> : null}
         </div>
@@ -119,7 +120,7 @@ export function Stat({
   return (
     <Link
       href={href}
-      className="group rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+      className="group block h-full rounded-2xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
     >
       {body}
     </Link>

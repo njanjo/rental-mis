@@ -54,14 +54,17 @@ export function UserMenu({
           <span className="hidden max-w-32 truncate text-sm sm:inline">{fullName}</span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-60">
+      <DropdownMenuContent align="end" className="w-60 shadow-e2">
         <DropdownMenuLabel className="space-y-1 font-normal">
           <div className="flex items-center gap-2">
             <UserRound className="size-3.5 text-muted-foreground" />
             <span className="truncate text-sm font-medium">{fullName || "Staff"}</span>
           </div>
           <p className="truncate text-xs text-muted-foreground">{email}</p>
-          <Badge variant="secondary" className="mt-1 font-normal">
+          <Badge
+            variant="secondary"
+            className="label-micro mt-1 h-5 border-hairline bg-muted px-1.5 text-[9px] text-muted-foreground"
+          >
             {ROLE_LABELS[role]}
           </Badge>
         </DropdownMenuLabel>

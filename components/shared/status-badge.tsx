@@ -73,8 +73,13 @@ export function StatusBadge({
   return (
     <Badge
       variant="secondary"
-      className={cn("border-transparent font-normal", tone.className, className)}
+      className={cn(
+        "gap-1.5 border-hairline font-normal tabular-nums",
+        tone.className,
+        className,
+      )}
     >
+      <span aria-hidden className="size-1.5 rounded-full bg-current" />
       {tone.label}
     </Badge>
   );

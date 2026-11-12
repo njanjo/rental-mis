@@ -23,7 +23,7 @@ export default function DashboardError({
 
   return (
     <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center">
-      <span className="flex size-11 items-center justify-center rounded-full bg-danger/10">
+      <span className="flex size-11 items-center justify-center rounded-xl bg-danger/10 ring-1 ring-danger/20">
         <TriangleAlert className="size-5 text-danger" aria-hidden />
       </span>
       <div className="space-y-1">
